@@ -86,7 +86,7 @@ export class TaskManager extends EventEmitter {
 
     task.on('status', (status) => {
       this.saveState();
-      this.emit('task:status', { id: task.id, status });
+      this.emit('task:status', { id: task.id, status, error: task.error || null });
       this.processQueue();
     });
 

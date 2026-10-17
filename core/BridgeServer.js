@@ -54,6 +54,28 @@ export class BridgeServer {
         return;
       }
 
+      // Save Cookies Endpoint (called by browser extension or manual cookie sync)
+      if (req.method === 'POST' && parsedUrl.pathname === '/api/cookies') {
+        let body = '';
+        req.on('data', chunk => body += chunk);
+        req.on('end', () => {
+          try {
+            const data = JSON.parse(body);
+            if (data.cookies) {
+              fs.writeFileSync(path.join(process.cwd(), 'cookies.txt'), data.cookies, 'utf8');
+              res.writeHead(200, { 'Content-Type': 'application/json' });
+              return res.end(JSON.stringify({ success: true, message: 'Cookies synchronized successfully' }));
+            }
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Missing cookies data' }));
+          } catch (e) {
+            res.writeHead(500, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: e.message }));
+          }
+        });
+        return;
+      }
+
       // Add download endpoint (called by browser extension when catching a download)
       if (req.method === 'POST' && (parsedUrl.pathname === '/api/download' || parsedUrl.pathname === '/download')) {
         let body = '';
@@ -313,6 +335,10 @@ export class BridgeServer {
 
     this.taskManager.on('task:status', (data) => {
       this.broadcast({ type: 'TASK_STATUS', data });
+    });
+
+    this.taskManager.on('task:error', (data) => {
+      this.broadcast({ type: 'TASK_STATUS', data: { id: data.id, status: 'error', error: data.error } });
     });
 
     this.taskManager.on('task:complete', (data) => {

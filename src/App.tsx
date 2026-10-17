@@ -176,7 +176,8 @@ export const AppContent: React.FC = () => {
               avgSpeed: msg.data.avgSpeed ?? t.avgSpeed,
               speedSamples: msg.data.speedSamples || (t.speedSamples ? [...t.speedSamples, msg.data.speed] : [msg.data.speed]),
               eta: msg.data.eta,
-              segments: msg.data.segments || t.segments
+              segments: msg.data.segments || t.segments,
+              error: msg.data.error !== undefined ? msg.data.error : t.error
             };
             setVisualizerTask((curr) => curr && curr.id === t.id ? updated : curr);
             return updated;
@@ -187,7 +188,12 @@ export const AppContent: React.FC = () => {
       case 'TASK_STATUS':
         setTasks((prev) => prev.map((t) => {
           if (t.id === msg.data.id) {
-            const updated = { ...t, status: msg.data.status, ...(msg.data.fileName ? { fileName: msg.data.fileName } : {}) };
+            const updated = {
+              ...t,
+              status: msg.data.status,
+              ...(msg.data.fileName ? { fileName: msg.data.fileName } : {}),
+              error: msg.data.error !== undefined ? msg.data.error : (msg.data.status === 'completed' ? null : t.error)
+            };
             setVisualizerTask((curr) => curr && curr.id === t.id ? updated : curr);
             return updated;
           }

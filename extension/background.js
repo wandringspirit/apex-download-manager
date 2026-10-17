@@ -114,6 +114,29 @@ chrome.downloads.onCreated.addListener(async (item) => {
   }
 });
 
+// Helper: Export session cookies for video extraction bypass (Netscape format)
+async function syncCookiesToADM(domain) {
+  try {
+    if (!chrome.cookies) return;
+    const cookies = await chrome.cookies.getAll({ domain });
+    if (!cookies || cookies.length === 0) return;
+    const lines = ['# Netscape HTTP Cookie File'];
+    for (const c of cookies) {
+      const flag = c.domain.startsWith('.') ? 'TRUE' : 'FALSE';
+      const secure = c.secure ? 'TRUE' : 'FALSE';
+      const expiry = c.expirationDate ? Math.round(c.expirationDate) : 0;
+      lines.push(`${c.domain}\t${flag}\t${c.path}\t${secure}\t${expiry}\t${c.name}\t${c.value}`);
+    }
+    await fetch(`${BRIDGE_URL}/api/cookies`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cookies: lines.join('\n') })
+    });
+  } catch (e) {
+    // Silent fail if cookies API is restricted
+  }
+}
+
 // Listen for messages from content scripts (e.g. Video Grabber button)
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === 'CHECK_ADM_STATUS') {
@@ -122,6 +145,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message.type === 'GRAB_MEDIA') {
+    if (message.url && (message.url.includes('youtube.com') || message.url.includes('youtu.be'))) {
+      syncCookiesToADM('.youtube.com');
+    }
     sendToADM({
       url: message.url,
       fileName: message.fileName || '',
