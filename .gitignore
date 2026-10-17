@@ -1,0 +1,40 @@
+# Dependencies
+node_modules/
+package-lock.json
+
+# Large Binary Executables (FFmpeg, aria2c > 100MB)
+bin/
+*.exe
+
+# Production Build Output
+dist/
+dist-electron/
+out/
+
+# Persistent Task State & Incomplete Downloads
+.adm_tasks.json
+*.adm_download
+*.adm_meta
+
+# Logs & Temporary Files
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# OS System Files
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Environment Configuration
+.env
+.env.local
+.env.*.local
+
+# IDE & Editor Files
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
