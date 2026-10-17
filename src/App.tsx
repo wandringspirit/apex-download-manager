@@ -302,6 +302,9 @@ export const AppContent: React.FC = () => {
   };
 
   const handleSetConcurrency = (id: string, count: number) => {
+    setTasks((prev) =>
+      prev.map((t) => (t.id === id ? { ...t, maxConnections: count } : t))
+    );
     if (ws && ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({ type: 'SET_CONCURRENCY', id, count }));
     }

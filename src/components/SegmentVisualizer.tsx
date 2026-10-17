@@ -31,15 +31,20 @@ export const SegmentVisualizer: React.FC<SegmentVisualizerProps> = ({
 }) => {
   const [activeTab, setActiveTab] = useState<'chart' | 'segments'>('chart');
   const [hoverIndex, setHoverIndex] = useState<number | null>(null);
-  const [sliderVal, setSliderVal] = useState<number>(32);
+  const [sliderVal, setSliderVal] = useState<number>(() => task?.maxConnections || 32);
+  const prevTaskIdRef = React.useRef<string | null>(null);
 
   useEffect(() => {
-    if (task?.maxConnections && task.maxConnections > 0) {
+    if (!task) return;
+    if (task.id !== prevTaskIdRef.current) {
+      // Switched to a new download task
+      prevTaskIdRef.current = task.id;
+      setSliderVal(task.maxConnections || 32);
+    } else if (task.maxConnections && task.maxConnections !== sliderVal && task.throttledReason) {
+      // Only sync down from task if backend explicitly auto-throttled (HTTP 429 step-down)
       setSliderVal(task.maxConnections);
-    } else if (task?.segments && task.segments.length > 0) {
-      setSliderVal(task.segments.length);
     }
-  }, [task?.maxConnections, task?.segments?.length]);
+  }, [task?.id, task?.maxConnections, task?.throttledReason]);
 
   // Guaranteed precise percentage string
   const percentStr = useMemo(() => {
@@ -174,9 +179,10 @@ export const SegmentVisualizer: React.FC<SegmentVisualizerProps> = ({
   const avgY = padTop + plotH - (Math.min(avgSpeed, maxVal) / maxVal) * plotH;
 
   const handleSliderChange = (newVal: number) => {
-    setSliderVal(newVal);
+    const safe = Math.max(1, Math.min(64, isNaN(newVal) ? 32 : newVal));
+    setSliderVal(safe);
     if (task) {
-      onSetConcurrency(task.id, newVal);
+      onSetConcurrency(task.id, safe);
     }
   };
 

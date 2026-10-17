@@ -31,6 +31,7 @@ export class TaskManager extends EventEmitter {
           task.peakSpeed = item.peakSpeed || 0;
           task.avgSpeed = item.avgSpeed || 0;
           task.speedSamples = item.speedSamples || [];
+          task.maxConnections = item.maxConnections || 32;
 
           // Synthesize realistic historical speed curve for past completed downloads if empty
           if (task.status === 'completed' && (!task.speedSamples || task.speedSamples.length === 0)) {
@@ -281,8 +282,12 @@ export class TaskManager extends EventEmitter {
 
   setTaskConcurrency(id, count) {
     const task = this.downloads.get(id);
-    if (task && typeof task.setConcurrency === 'function') {
-      task.setConcurrency(count);
+    if (task) {
+      const safeCount = Math.max(1, Math.min(64, parseInt(count, 10) || 32));
+      task.maxConnections = safeCount;
+      if (typeof task.setConcurrency === 'function') {
+        task.setConcurrency(safeCount);
+      }
       this.saveState();
       this.emit('task:progress', {
         id: task.id,

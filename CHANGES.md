@@ -29,6 +29,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
     - **Speed Chart Tab**: Full-height Transfer Rate Waveform Oscilloscope with live SVG curves, dashed gridlines, timeline labels, and interactive mouse-hover inspection crosshairs.
     - **Segments Tab**: Concurrency control bar (slider + 8/16/32/64 presets), IDM-style master file memory map, and multi-socket worker cards grid.
   - Added dynamic multi-socket segment synthesis in `YoutubeDownloader.js` and `SegmentVisualizer.tsx` ensuring multi-thread partition visualization across all downloads.
+  - **Fixed 64 Concurrency Revert Bug**: Resolved race condition where selecting 64 sockets immediately reverted back to 1. Replaced unsafe `task.segments.length` fallback in React lifecycle with persistent `useRef` tracking, optimistic local state updates in `App.tsx`, and state persistence in `TaskManager.loadState()`.
 
 ### 🚀 Acceleration Engine & Core Architecture
 - **64-Thread Dynamic Bisecting Range Engine**:
