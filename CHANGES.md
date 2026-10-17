@@ -21,6 +21,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
   - Replaced plain text status with hairline micro progress bars (1.5px cobalt bar) and tabular percentages for downloading tasks.
   - Added semantic status dot indicators for Complete (emerald), Paused (amber), Queued (slate), and Error (rose).
   - Cohesive monochrome Lucide icons (`Video`, `Archive`, `Package`, `FileText`, `File`) with `stroke-[1.75]`.
+  - **Universal In-Row Action Symbols**: Replaced plain text buttons (`Inspect`, `Properties`, `Speed telemetry`) with crisp universal symbol icon controls:
+    - Resume: `Play` symbol (`▶`, Emerald)
+    - Pause: `Pause` symbol (`⏸`, Amber)
+    - Stop: `Square` symbol (`⏹`, Rose)
+    - Open File & Folder: `Play` & `Folder` symbols for completed downloads
+    - Telemetry: `Activity` symbol (`📈`, Cobalt)
 - **Added Native Window Status Bar**: Pinned a native instrument footer bar displaying live bridge status (`127.0.0.1:48911`), active/queued/completed counts, total throughput in real-time tabular numbers, and socket capacity.
 - **Standardized Modals**: Updated `AddDownloadModal`, `SchedulerModal`, `SettingsModal`, `AboutModal`, and `ShareModal` to match the obsidian surface system.
 - **Architectural Overhaul of Inspector Tabs (Speed Chart vs. Segments)**:

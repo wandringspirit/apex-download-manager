@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { 
   File, Archive, Package, FileText, Video, ChevronRight, 
-  Activity, Play, Pause, Trash2, Folder, 
+  Activity, Play, Pause, Square, Trash2, Folder, 
   ExternalLink, Edit2, RotateCcw, Check, Plus, Layers
 } from 'lucide-react';
 import { DownloadItem } from '../types';
@@ -207,7 +207,7 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({
             <th className="py-2 px-2.5 border-r border-white/[0.04] w-24">Size</th>
             <th className="py-2 px-2.5 border-r border-white/[0.04] w-36">Status</th>
             <th className="py-2 px-2.5 border-r border-white/[0.04] w-24">Time left</th>
-            <th className="py-2 px-3 w-44">Transfer Rate</th>
+            <th className="py-2 px-3 w-52">Transfer Rate</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-white/[0.04] text-[11px] text-slate-200">
@@ -267,45 +267,111 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({
                   </td>
 
                   {/* Transfer Rate */}
+                  {/* Transfer Rate & Universal Action Controls */}
                   <td className="py-2 px-3 font-mono text-[11px]">
-                    <div className="flex items-center justify-between gap-1.5">
-                      {task.status === 'downloading' ? (
-                        <>
-                          <span className="text-slate-100 font-semibold tabular-nums">{formatSpeed(task.speed)}</span>
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              onOpenSpeedChart(task);
-                            }}
-                            className="px-2 py-0.5 rounded bg-blue-500/15 hover:bg-blue-500/25 text-blue-400 font-sans text-[10px] font-medium border border-blue-500/30 cursor-pointer transition"
-                            title="Inspect Transfer Telemetry"
-                          >
-                            Inspect
-                          </button>
-                        </>
-                      ) : task.status === 'completed' ? (
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-slate-100 font-semibold tabular-nums min-w-[58px]">
+                        {task.status === 'downloading' ? formatSpeed(task.speed) : '--'}
+                      </span>
+
+                      {/* Universal Action Symbols */}
+                      <div className="flex items-center gap-1 flex-shrink-0">
+                        {task.status === 'downloading' ? (
+                          <>
+                            {/* Pause Button (Universal Symbol: ⏸) */}
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onPause(task.id);
+                              }}
+                              className="w-6 h-6 rounded flex items-center justify-center bg-white/[0.04] hover:bg-amber-500/15 text-amber-400 hover:text-amber-300 transition cursor-pointer border border-white/[0.06] hover:border-amber-500/30"
+                              title="Pause Download (⏸)"
+                            >
+                              <Pause className="w-3 h-3 fill-current" />
+                            </button>
+
+                            {/* Stop Button (Universal Symbol: ⏹) */}
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onPause(task.id);
+                              }}
+                              className="w-6 h-6 rounded flex items-center justify-center bg-white/[0.04] hover:bg-rose-500/15 text-rose-400 hover:text-rose-300 transition cursor-pointer border border-white/[0.06] hover:border-rose-500/30"
+                              title="Stop Download (⏹)"
+                            >
+                              <Square className="w-2.5 h-2.5 fill-current" />
+                            </button>
+                          </>
+                        ) : task.status === 'completed' ? (
+                          <>
+                            {/* Open / Play File Button (Universal Symbol: ▶) */}
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onOpenFile(task.id);
+                              }}
+                              className="w-6 h-6 rounded flex items-center justify-center bg-white/[0.04] hover:bg-blue-500/15 text-blue-400 hover:text-blue-300 transition cursor-pointer border border-white/[0.06] hover:border-blue-500/30"
+                              title="Open File (▶)"
+                            >
+                              <Play className="w-3 h-3 fill-current ml-0.5" />
+                            </button>
+
+                            {/* Open Containing Folder Button (Universal Symbol: 📁) */}
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onOpenFolder(task.id);
+                              }}
+                              className="w-6 h-6 rounded flex items-center justify-center bg-white/[0.04] hover:bg-white/[0.1] text-slate-400 hover:text-slate-200 transition cursor-pointer border border-white/[0.06] hover:border-white/15"
+                              title="Open Containing Folder"
+                            >
+                              <Folder className="w-3 h-3" />
+                            </button>
+                          </>
+                        ) : (
+                          <>
+                            {/* Resume Button (Universal Symbol: ▶) */}
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onResume(task.id);
+                              }}
+                              className="w-6 h-6 rounded flex items-center justify-center bg-white/[0.04] hover:bg-emerald-500/15 text-emerald-400 hover:text-emerald-300 transition cursor-pointer border border-white/[0.06] hover:border-emerald-500/30"
+                              title="Resume Download (▶)"
+                            >
+                              <Play className="w-3 h-3 fill-current ml-0.5" />
+                            </button>
+
+                            {/* Stop Button (Universal Symbol: ⏹) */}
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onPause(task.id);
+                              }}
+                              className="w-6 h-6 rounded flex items-center justify-center bg-white/[0.04] hover:bg-rose-500/15 text-slate-400 hover:text-rose-400 transition cursor-pointer border border-white/[0.06] hover:border-rose-500/30"
+                              title="Stop (⏹)"
+                            >
+                              <Square className="w-2.5 h-2.5 fill-current" />
+                            </button>
+                          </>
+                        )}
+
+                        {/* Speed Chart / Telemetry Inspector (Universal Symbol: 📈) */}
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
                             onOpenSpeedChart(task);
                           }}
-                          className="px-2 py-0.5 rounded bg-white/[0.04] hover:bg-white/[0.08] text-slate-400 hover:text-slate-200 font-sans text-[10px] font-medium border border-white/[0.06] cursor-pointer transition"
-                          title="Inspect Transfer Speed Telemetry"
+                          className={`w-6 h-6 rounded flex items-center justify-center transition cursor-pointer border ${
+                            task.status === 'downloading'
+                              ? 'bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 hover:text-blue-300 border-blue-500/25'
+                              : 'bg-white/[0.04] hover:bg-white/[0.1] text-slate-400 hover:text-slate-200 border-white/[0.06]'
+                          }`}
+                          title="Speed Chart & Telemetry Inspector"
                         >
-                          Speed telemetry
+                          <Activity className="w-3 h-3" />
                         </button>
-                      ) : (
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onOpenSpeedChart(task);
-                          }}
-                          className="px-2 py-0.5 rounded bg-white/[0.04] hover:bg-white/[0.08] text-slate-400 hover:text-slate-200 font-sans text-[10px] border border-white/[0.06] cursor-pointer transition"
-                          title="Properties"
-                        >
-                          Properties
-                        </button>
-                      )}
+                      </div>
                     </div>
                   </td>
                 </tr>
