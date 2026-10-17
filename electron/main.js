@@ -49,8 +49,13 @@ function createWindow() {
 
   mainWindow.setMenuBarVisibility(false);
 
-  // Load from local bridge server
-  mainWindow.loadURL('http://127.0.0.1:48911');
+  // Load direct from local dist bundle for instantaneous startup, with HTTP fallback
+  const indexPath = path.join(__dirname, '..', 'dist', 'index.html');
+  if (fs.existsSync(indexPath)) {
+    mainWindow.loadFile(indexPath);
+  } else {
+    mainWindow.loadURL('http://127.0.0.1:48911');
+  }
 
   // Keyboard shortcut handlers for F5 (Reload) and F12 (DevTools)
   mainWindow.webContents.on('before-input-event', (event, input) => {
