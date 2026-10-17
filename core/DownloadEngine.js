@@ -37,6 +37,7 @@ export class DownloadTask extends EventEmitter {
     this.error = null;
     this.throttledReason = options.throttledReason || null;
     this.last429Time = 0;
+    this.headers = options.headers || {};
     this.createdAt = options.createdAt || new Date().toISOString();
   }
 
@@ -75,6 +76,7 @@ export class DownloadTask extends EventEmitter {
       const headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         'Accept': '*/*',
+        ...this.headers,
         'Range': 'bytes=0-0'
       };
 
@@ -267,6 +269,7 @@ export class DownloadTask extends EventEmitter {
     const headers = {
       'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
       'Accept': '*/*',
+      ...this.headers,
       'Range': `bytes=${segment.current}-${segment.end}`
     };
 
@@ -498,7 +501,8 @@ export class DownloadTask extends EventEmitter {
 
     const headers = {
       'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-      'Accept': '*/*'
+      'Accept': '*/*',
+      ...this.headers
     };
 
     const req = client.request(this.url, { method: 'GET', headers }, (res) => {

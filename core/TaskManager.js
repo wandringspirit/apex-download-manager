@@ -5,6 +5,7 @@ import { EventEmitter } from 'events';
 import { DownloadTask } from './DownloadEngine.js';
 import { HlsStreamGrabber } from './StreamGrabber.js';
 import { YoutubeDownloader } from './YoutubeDownloader.js';
+import { TeraboxDownloader } from './TeraboxDownloader.js';
 
 export class TaskManager extends EventEmitter {
   constructor(options = {}) {
@@ -120,6 +121,17 @@ export class TaskManager extends EventEmitter {
       this.emit('task:added', ytTask.toJSON());
       if (autoStart) ytTask.start();
       return ytTask;
+    }
+
+    // Check if it's a TeraBox link
+    if (TeraboxDownloader.isTeraboxUrl(url)) {
+      const tbTask = new TeraboxDownloader({ url, fileName, savePath, category: category || 'General', maxConnections });
+      this.attachTaskEvents(tbTask);
+      this.downloads.set(tbTask.id, tbTask);
+      this.saveState();
+      this.emit('task:added', tbTask.toJSON());
+      if (autoStart) tbTask.start();
+      return tbTask;
     }
 
     // Check if it's an HLS stream
