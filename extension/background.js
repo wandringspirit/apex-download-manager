@@ -148,6 +148,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message.url && (message.url.includes('youtube.com') || message.url.includes('youtu.be'))) {
       syncCookiesToADM('.youtube.com');
     }
+    if (message.url && (message.url.includes('terabox') || message.url.includes('1024tera') || message.url.includes('nephobox'))) {
+      syncCookiesToADM('.terabox.com');
+      syncCookiesToADM('.1024tera.com');
+      syncCookiesToADM('.terabox.app');
+    }
     sendToADM({
       url: message.url,
       fileName: message.fileName || '',

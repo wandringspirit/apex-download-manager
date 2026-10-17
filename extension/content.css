@@ -105,7 +105,10 @@
 
 /* Dismiss Close Button */
 .adm-idm-btn-close {
-  padding: 6px 8px !important;
+  padding: 6px 10px !important;
+  min-width: 26px !important;
+  min-height: 26px !important;
+  box-sizing: border-box !important;
   color: #94a3b8 !important;
   line-height: 1 !important;
   cursor: pointer !important;
@@ -114,16 +117,25 @@
   justify-content: center !important;
   border-radius: 0 7px 7px 0 !important;
   transition: all 0.15s ease !important;
+  pointer-events: auto !important;
+  position: relative !important;
+  z-index: 10 !important;
 }
 
 .adm-idm-btn-close:hover {
-  background: rgba(239, 68, 68, 0.22) !important;
-  color: #f87171 !important;
+  background: rgba(239, 68, 68, 0.35) !important;
+  color: #ffffff !important;
+}
+
+.adm-idm-btn-close svg,
+.adm-idm-btn-close line {
+  pointer-events: none !important;
 }
 
 .adm-idm-close-icon {
   width: 11px !important;
   height: 11px !important;
+  stroke: currentColor !important;
 }
 
 /* Success / Error States */

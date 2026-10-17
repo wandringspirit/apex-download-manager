@@ -4,11 +4,11 @@
   function findBestPlayerContainer(mediaElement) {
     if (!mediaElement) return document.body;
 
-    // 1. YouTube specialized player (movie_player is the persistent player instance)
-    const ytPlayer = document.getElementById('movie_player') || 
-                     mediaElement.closest('#movie_player') || 
-                     mediaElement.closest('.html5-video-player');
-    if (ytPlayer) return ytPlayer;
+    // 1. YouTube specialized player (only if mediaElement is inside YouTube's player)
+    const ytPlayerWrapper = mediaElement.closest('#movie_player, .html5-video-player, ytd-player, #player');
+    if (ytPlayerWrapper) {
+      return document.getElementById('movie_player') || ytPlayerWrapper;
+    }
 
     // 2. Specialized web video players (VideoJS, JWPlayer, Plyr, Vimeo, Twitter, etc.)
     const playerWrapper = mediaElement.closest(
@@ -23,8 +23,21 @@
   }
 
   function createFloatingDownloadButton(mediaElement, container) {
-    // If user explicitly dismissed button for this video element, respect choice
-    if (mediaElement._adm_dismissed) return;
+    if (!container) return;
+
+    // If user explicitly dismissed button for this media, container, or URL, respect choice
+    const pageKey = window.location.pathname + window.location.search;
+    if (mediaElement._adm_dismissed || container._adm_dismissed || window._adm_dismissed_url === window.location.href) {
+      return;
+    }
+    try {
+      if (sessionStorage.getItem('adm_dismissed_' + pageKey) === '1') return;
+    } catch (_) {}
+
+    // Strict deduplication: NEVER allow more than one grabber panel inside the same container
+    if (container.querySelector('.adm-idm-grabber-panel')) {
+      return;
+    }
 
     // Create panel
     const panel = document.createElement('div');
@@ -199,13 +212,53 @@
       }, true);
     });
 
-    // Close / Dismiss button
-    closeBtn.addEventListener('click', (e) => {
+    // Close / Dismiss button handler (bulletproof dismissal)
+    let isDismissed = false;
+    const handleDismiss = (e) => {
+      if (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        if (typeof e.stopImmediatePropagation === 'function') e.stopImmediatePropagation();
+      }
+      if (isDismissed) return;
+      isDismissed = true;
+
+      mediaElement._adm_dismissed = true;
+      if (container) container._adm_dismissed = true;
+      window._adm_dismissed_url = window.location.href;
+      try {
+        sessionStorage.setItem('adm_dismissed_' + (window.location.pathname + window.location.search), '1');
+      } catch (_) {}
+
+      // Remove panel and any duplicate panels immediately
+      panel.style.display = 'none';
+      if (panel.parentNode) {
+        panel.parentNode.removeChild(panel);
+      }
+      if (container) {
+        const allPanels = container.querySelectorAll('.adm-idm-grabber-panel');
+        allPanels.forEach(p => {
+          try { p.parentNode.removeChild(p); } catch (_) {}
+        });
+      }
+    };
+
+    // Prevent player click events on close button
+    closeBtn.addEventListener('pointerdown', (e) => {
       e.preventDefault();
       e.stopPropagation();
-      panel.style.display = 'none';
-      mediaElement._adm_dismissed = true;
+      if (typeof e.stopImmediatePropagation === 'function') e.stopImmediatePropagation();
     }, true);
+    closeBtn.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (typeof e.stopImmediatePropagation === 'function') e.stopImmediatePropagation();
+    }, true);
+
+    // Bind multiple dismissal triggers for zero-latency response
+    closeBtn.addEventListener('click', handleDismiss, true);
+    closeBtn.addEventListener('pointerup', handleDismiss, true);
+    closeBtn.addEventListener('mouseup', handleDismiss, true);
 
     // Close dropdown on outside click
     document.addEventListener('click', (e) => {
@@ -238,31 +291,27 @@
   // Ensures button is attached and persists even across video playback start & player DOM re-renders
   function ensureButtonForMedia(mediaElement) {
     if (!mediaElement || !document.contains(mediaElement)) return;
-    if (mediaElement._adm_dismissed) return;
+    
+    // Check if dismissed
+    const pageKey = window.location.pathname + window.location.search;
+    if (mediaElement._adm_dismissed || window._adm_dismissed_url === window.location.href) return;
+    try {
+      if (sessionStorage.getItem('adm_dismissed_' + pageKey) === '1') return;
+    } catch (_) {}
 
     // Filter out tiny audio elements or miniature preview icons
     const rect = mediaElement.getBoundingClientRect();
-    const isVisible = rect.width > 120 && rect.height > 80;
+    const isVisible = rect.width > 160 && rect.height > 90;
     if (!isVisible && !mediaElement.autoplay && mediaElement.paused && !mediaElement.controls) {
       return;
     }
 
     // Find best container (prioritizes #movie_player)
     const container = findBestPlayerContainer(mediaElement);
-    if (!container) return;
+    if (!container || container._adm_dismissed) return;
 
-    // If panel already exists and is actively in the DOM
-    if (mediaElement._adm_panel && document.contains(mediaElement._adm_panel)) {
-      // If container changed (e.g. from outer wrapper to movie_player when player activated)
-      if (mediaElement._adm_panel.parentElement !== container) {
-        container.appendChild(mediaElement._adm_panel);
-      }
-      return;
-    }
-
-    // If panel was created previously but detached by YouTube/player re-render: re-append it!
-    if (mediaElement._adm_panel) {
-      container.appendChild(mediaElement._adm_panel);
+    // Strict single panel per container
+    if (container.querySelector('.adm-idm-grabber-panel')) {
       return;
     }
 
@@ -289,6 +338,9 @@
 
   // YouTube SPA navigation events (when switching videos without page reload)
   window.addEventListener('yt-navigate-finish', () => {
+    if (window._adm_dismissed_url && window._adm_dismissed_url !== window.location.href) {
+      window._adm_dismissed_url = null;
+    }
     setTimeout(scanMedia, 300);
     setTimeout(scanMedia, 1000);
     setTimeout(scanMedia, 2500);
@@ -305,4 +357,97 @@
   setInterval(scanMedia, 1500);
   setTimeout(scanMedia, 500);
   setTimeout(scanMedia, 1500);
+
+  // =========================================================================
+  // TeraBox Direct Multi-Socket Download Bypass Interceptor
+  // =========================================================================
+  const isTerabox = [
+    'terabox.com', '1024tera.com', 'teraboxapp.com', 'terabox.app',
+    '1024terabox.com', 'freeterabox.com', 'nephobox.com', '4funbox.com',
+    'mirrobox.com', 'dubox.com'
+  ].some(d => window.location.hostname.includes(d));
+
+  if (isTerabox) {
+    console.log('[ADM] TeraBox Direct Multi-Socket Interceptor activated.');
+
+    const fileMap = new Map();
+
+    // 1. Intercept fetch/XHR to extract direct dlink from TeraBox API responses
+    const originalFetch = window.fetch;
+    if (typeof originalFetch === 'function') {
+      window.fetch = async function(...args) {
+        const res = await originalFetch.apply(this, args);
+        try {
+          const clone = res.clone();
+          const urlStr = String(args[0] || '');
+          if (urlStr.includes('/list') || urlStr.includes('/share') || urlStr.includes('/membership')) {
+            clone.json().then(data => {
+              if (data && Array.isArray(data.list)) {
+                for (const item of data.list) {
+                  const name = item.server_filename || item.filename || '';
+                  const dlink = item.dlink || '';
+                  const size = item.size || 0;
+                  if (name && dlink) {
+                    fileMap.set(name, { name, dlink, size });
+                    if (item.fs_id) fileMap.set(String(item.fs_id), { name, dlink, size });
+                  }
+                }
+              }
+            }).catch(() => {});
+          }
+        } catch (e) {}
+        return res;
+      };
+    }
+
+    // 2. Intercept clicks on TeraBox's download buttons to bypass mandatory app prompt
+    document.addEventListener('click', (e) => {
+      const btn = e.target.closest('.download-btn, [class*="download"], [data-fun="download"], button[title*="Download"], .wp-s-core-header-tool__item');
+      if (!btn) return;
+
+      // Find checked or selected file items
+      const selected = document.querySelectorAll('.file-item-listmode.checked, .file-item.selected, .wp-s-pan-table__body-row.is-checked, [class*="is-checked"], [class*="selected"]');
+      let targetFile = null;
+
+      if (selected.length > 0) {
+        for (const row of selected) {
+          const text = row.textContent || '';
+          for (const [name, info] of fileMap.entries()) {
+            if (text.includes(name)) {
+              targetFile = info;
+              break;
+            }
+          }
+          if (targetFile) break;
+        }
+      }
+
+      if (!targetFile && fileMap.size > 0) {
+        targetFile = fileMap.values().next().value;
+      }
+
+      if (targetFile && targetFile.dlink) {
+        e.preventDefault();
+        e.stopPropagation();
+        e.stopImmediatePropagation();
+
+        if (chrome && chrome.runtime && chrome.runtime.id) {
+          chrome.runtime.sendMessage({
+            type: 'GRAB_MEDIA',
+            url: targetFile.dlink,
+            fileName: targetFile.name,
+            totalBytes: targetFile.size
+          });
+
+          // Show floating visual indicator
+          const toast = document.createElement('div');
+          toast.className = 'adm-idm-grabber-panel';
+          toast.style.cssText = 'position:fixed;top:20px;right:20px;z-index:999999;background:#13161c;border:1px solid #3b82f6;color:#fff;padding:12px 18px;border-radius:8px;font-family:sans-serif;box-shadow:0 10px 25px rgba(0,0,0,0.5);display:flex;align-items:center;gap:10px;';
+          toast.innerHTML = `<span style="width:8px;height:8px;border-radius:50%;background:#3b82f6;"></span><span><strong>Apex Download Manager:</strong> Downloading <strong>${targetFile.name}</strong> with 32 parallel threads...</span>`;
+          document.body.appendChild(toast);
+          setTimeout(() => toast.remove(), 4000);
+        }
+      }
+    }, true);
+  }
 })();
