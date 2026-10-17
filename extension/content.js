@@ -1,28 +1,32 @@
 // Video Grabber - Authentic IDM-style floating download badge on web players
 (() => {
-  const processedMedia = new WeakSet();
+  // Finds the exact active player container (never walks past the actual video player wrapper)
+  function findBestPlayerContainer(mediaElement) {
+    if (!mediaElement) return document.body;
 
-  function findTopPlayerContainer(mediaElement) {
-    let cur = mediaElement.parentElement;
-    let candidate = cur || document.body;
-    while (cur && cur !== document.body && cur !== document.documentElement) {
-      const cls = (typeof cur.className === 'string' ? cur.className : '').toLowerCase();
-      const id = (cur.id || '').toLowerCase();
-      if (
-        cls.includes('player') || cls.includes('video-container') || cls.includes('media-container') ||
-        cls.includes('html5-video') || id.includes('player') || id.includes('movie_player')
-      ) {
-        candidate = cur;
-      }
-      cur = cur.parentElement;
+    // 1. YouTube specialized player (movie_player is the persistent player instance)
+    const ytPlayer = document.getElementById('movie_player') || 
+                     mediaElement.closest('#movie_player') || 
+                     mediaElement.closest('.html5-video-player');
+    if (ytPlayer) return ytPlayer;
+
+    // 2. Specialized web video players (VideoJS, JWPlayer, Plyr, Vimeo, Twitter, etc.)
+    const playerWrapper = mediaElement.closest(
+      '.video-js, .jwplayer, .plyr, .vjs-tech, [data-player], [class*="player"], [id*="player"]'
+    );
+    if (playerWrapper && playerWrapper !== document.body && playerWrapper !== document.documentElement) {
+      return playerWrapper;
     }
-    return candidate;
+
+    // 3. Direct parent container
+    return mediaElement.parentElement || document.body;
   }
 
-  function createFloatingDownloadButton(mediaElement) {
-    if (processedMedia.has(mediaElement)) return;
-    processedMedia.add(mediaElement);
+  function createFloatingDownloadButton(mediaElement, container) {
+    // If user explicitly dismissed button for this video element, respect choice
+    if (mediaElement._adm_dismissed) return;
 
+    // Create panel
     const panel = document.createElement('div');
     panel.className = 'adm-idm-grabber-panel';
     panel.setAttribute('role', 'region');
@@ -200,6 +204,7 @@
       e.preventDefault();
       e.stopPropagation();
       panel.style.display = 'none';
+      mediaElement._adm_dismissed = true;
     }, true);
 
     // Close dropdown on outside click
@@ -220,31 +225,84 @@
       if (typeof e.stopImmediatePropagation === 'function') e.stopImmediatePropagation();
     }, true);
 
-    const playerContainer = findTopPlayerContainer(mediaElement);
-    if (getComputedStyle(playerContainer).position === 'static') {
-      playerContainer.style.position = 'relative';
+    // Ensure container positioning
+    if (getComputedStyle(container).position === 'static') {
+      container.style.position = 'relative';
     }
 
-    playerContainer.appendChild(panel);
+    // Attach to DOM and associate with mediaElement
+    container.appendChild(panel);
+    mediaElement._adm_panel = panel;
   }
 
-  // Scan for existing media tags
+  // Ensures button is attached and persists even across video playback start & player DOM re-renders
+  function ensureButtonForMedia(mediaElement) {
+    if (!mediaElement || !document.contains(mediaElement)) return;
+    if (mediaElement._adm_dismissed) return;
+
+    // Filter out tiny audio elements or miniature preview icons
+    const rect = mediaElement.getBoundingClientRect();
+    const isVisible = rect.width > 120 && rect.height > 80;
+    if (!isVisible && !mediaElement.autoplay && mediaElement.paused && !mediaElement.controls) {
+      return;
+    }
+
+    // Find best container (prioritizes #movie_player)
+    const container = findBestPlayerContainer(mediaElement);
+    if (!container) return;
+
+    // If panel already exists and is actively in the DOM
+    if (mediaElement._adm_panel && document.contains(mediaElement._adm_panel)) {
+      // If container changed (e.g. from outer wrapper to movie_player when player activated)
+      if (mediaElement._adm_panel.parentElement !== container) {
+        container.appendChild(mediaElement._adm_panel);
+      }
+      return;
+    }
+
+    // If panel was created previously but detached by YouTube/player re-render: re-append it!
+    if (mediaElement._adm_panel) {
+      container.appendChild(mediaElement._adm_panel);
+      return;
+    }
+
+    // Fresh creation
+    createFloatingDownloadButton(mediaElement, container);
+  }
+
+  // Scan all media elements on page
   function scanMedia() {
     const videos = document.querySelectorAll('video');
     videos.forEach(v => {
-      if (v.offsetWidth > 80 || v.offsetHeight > 80 || v.autoplay || v.controls || !v.paused) {
-        createFloatingDownloadButton(v);
-      }
+      ensureButtonForMedia(v);
     });
   }
 
-  // Observe DOM for dynamic video player insertions
+  // Listen to video playback events (fires right when video finishes loading and starts playing)
+  ['playing', 'play', 'loadeddata', 'canplay', 'loadedmetadata'].forEach(eventName => {
+    document.addEventListener(eventName, (e) => {
+      if (e.target && e.target.tagName === 'VIDEO') {
+        ensureButtonForMedia(e.target);
+      }
+    }, true);
+  });
+
+  // YouTube SPA navigation events (when switching videos without page reload)
+  window.addEventListener('yt-navigate-finish', () => {
+    setTimeout(scanMedia, 300);
+    setTimeout(scanMedia, 1000);
+    setTimeout(scanMedia, 2500);
+  });
+  window.addEventListener('spfdone', scanMedia);
+
+  // Dynamic DOM observation
   const observer = new MutationObserver(() => {
     scanMedia();
   });
-
   observer.observe(document.documentElement || document.body, { childList: true, subtree: true });
 
-  setInterval(scanMedia, 2000);
+  // Periodic heartbeat ensuring persistent visibility
+  setInterval(scanMedia, 1500);
   setTimeout(scanMedia, 500);
+  setTimeout(scanMedia, 1500);
 })();
