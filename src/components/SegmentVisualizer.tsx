@@ -133,31 +133,53 @@ export const SegmentVisualizer: React.FC<SegmentVisualizerProps> = ({
     return Math.round(nonZero.reduce((a, b) => a + b, 0) / nonZero.length);
   }, [task?.avgSpeed, samples, task?.speed]);
 
-  // SVG Chart dimensions & scaling
-  const chartWidth = 680;
-  const chartHeight = inline ? 135 : 160;
-  const padLeft = 64;
-  const padRight = 16;
-  const padTop = 14;
-  const padBottom = 24;
-  const plotW = chartWidth - padLeft - padRight;
-  const plotH = chartHeight - padTop - padBottom;
+  // Dynamic Canvas Dimensions via ResizeObserver for 1:1 crisp rendering
+  const canvasContainerRef = React.useRef<HTMLDivElement>(null);
+  const [canvasDims, setCanvasDims] = useState<{ width: number; height: number }>({ width: 800, height: 140 });
+
+  useEffect(() => {
+    const el = canvasContainerRef.current;
+    if (!el) return;
+
+    const updateDims = () => {
+      const rect = el.getBoundingClientRect();
+      if (rect.width > 0 && rect.height > 0) {
+        setCanvasDims({
+          width: Math.round(rect.width),
+          height: Math.round(rect.height)
+        });
+      }
+    };
+
+    updateDims();
+
+    const ro = new ResizeObserver(() => {
+      updateDims();
+    });
+    ro.observe(el);
+
+    return () => ro.disconnect();
+  }, [activeTab]);
 
   const maxVal = Math.max(peakSpeed * 1.15, 1024 * 1024) || 1048576;
+  const padTop = 6;
+  const padBottom = 6;
+  const plotH = Math.max(10, canvasDims.height - padTop - padBottom);
+  const plotW = Math.max(10, canvasDims.width);
 
   // Generate SVG path coordinates
   const points = useMemo(() => {
     return samples.map((val, idx) => {
       const safeVal = typeof val === 'number' && !isNaN(val) ? val : 0;
-      const x = padLeft + (idx / Math.max(1, samples.length - 1)) * plotW;
+      const x = samples.length <= 1 ? plotW : (idx / Math.max(1, samples.length - 1)) * plotW;
       const y = padTop + plotH - (Math.min(safeVal, maxVal) / maxVal) * plotH;
       return { x, y, val: safeVal, idx };
     });
-  }, [samples, maxVal, plotW, plotH, padLeft, padTop]);
+  }, [samples, maxVal, plotW, plotH, padTop]);
 
   const pathData = useMemo(() => {
     if (points.length === 0) return '';
-    if (points.length === 1) return `M ${points[0].x.toFixed(1)},${points[0].y.toFixed(1)} L ${points[0].x.toFixed(1)},${points[0].y.toFixed(1)}`;
+    if (points.length === 1) return `M 0,${points[0].y.toFixed(1)} L ${plotW},${points[0].y.toFixed(1)}`;
     return points.reduce((acc, p, idx) => {
       if (idx === 0) return `M ${p.x.toFixed(1)},${p.y.toFixed(1)}`;
       const prev = points[idx - 1];
@@ -167,14 +189,18 @@ export const SegmentVisualizer: React.FC<SegmentVisualizerProps> = ({
       const cy2 = p.y;
       return `${acc} C ${cx1.toFixed(1)},${cy1.toFixed(1)} ${cx2.toFixed(1)},${cy2.toFixed(1)} ${p.x.toFixed(1)},${p.y.toFixed(1)}`;
     }, '');
-  }, [points]);
+  }, [points, plotW]);
 
   const areaData = useMemo(() => {
     if (points.length === 0) return '';
+    const baseY = canvasDims.height - padBottom;
+    if (points.length === 1) {
+      return `M 0,${points[0].y.toFixed(1)} L ${plotW},${points[0].y.toFixed(1)} L ${plotW},${baseY} L 0,${baseY} Z`;
+    }
     const last = points[points.length - 1];
     const first = points[0];
-    return `${pathData} L ${last.x.toFixed(1)},${(padTop + plotH).toFixed(1)} L ${first.x.toFixed(1)},${(padTop + plotH).toFixed(1)} Z`;
-  }, [pathData, points, padTop, plotH]);
+    return `${pathData} L ${last.x.toFixed(1)},${baseY} L ${first.x.toFixed(1)},${baseY} Z`;
+  }, [pathData, points, canvasDims.height, padBottom, plotW]);
 
   const avgY = padTop + plotH - (Math.min(avgSpeed, maxVal) / maxVal) * plotH;
 
@@ -188,14 +214,11 @@ export const SegmentVisualizer: React.FC<SegmentVisualizerProps> = ({
 
   if (!task) return null;
 
-  const handleMouseMove = (e: React.MouseEvent<SVGSVGElement>) => {
+  const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (samples.length === 0) return;
     const rect = e.currentTarget.getBoundingClientRect();
-    const mouseX = ((e.clientX - rect.left) / rect.width) * chartWidth;
-    if (mouseX < padLeft || mouseX > chartWidth - padRight) {
-      setHoverIndex(null);
-      return;
-    }
-    const relX = (mouseX - padLeft) / plotW;
+    const mouseX = e.clientX - rect.left;
+    const relX = Math.max(0, Math.min(1, mouseX / rect.width));
     const idx = Math.min(samples.length - 1, Math.max(0, Math.round(relX * (samples.length - 1))));
     setHoverIndex(idx);
   };
@@ -357,163 +380,145 @@ export const SegmentVisualizer: React.FC<SegmentVisualizerProps> = ({
               </div>
             </div>
 
-            {/* Precision Interactive SVG Oscilloscope */}
-            <div className="relative w-full flex-1 min-h-0 overflow-hidden bg-[#0c0e14] rounded border border-white/5 flex items-center justify-center">
-              <svg
-                viewBox={`0 0 ${chartWidth} ${chartHeight}`}
-                preserveAspectRatio="none"
-                className="w-full h-full select-none cursor-crosshair"
-                onMouseMove={handleMouseMove}
-                onMouseLeave={() => setHoverIndex(null)}
-              >
-                <defs>
-                  <linearGradient id={`chartGrad-${inline ? 'inline' : 'modal'}`} x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor="#3b82f6" stopOpacity="0.25" />
-                    <stop offset="100%" stopColor="#3b82f6" stopOpacity="0.0" />
-                  </linearGradient>
-                </defs>
+            {/* Precision Interactive Oscilloscope Container */}
+            <div className="relative w-full flex-1 min-h-0 overflow-hidden bg-[#0c0e14] rounded border border-white/5 flex flex-col p-2.5 select-none">
+              <div className="flex-1 flex min-h-0 relative">
+                
+                {/* Left Y-Axis Markings (Pure Un-Stretched HTML Monospace) */}
+                <div 
+                  className="w-16 flex flex-col justify-between items-end pr-2.5 text-[10px] font-mono text-slate-400 select-none flex-shrink-0 tabular-nums"
+                  style={{ paddingTop: `${padTop}px`, paddingBottom: `${padBottom}px` }}
+                >
+                  <span className="leading-none">{formatSpeed(maxVal)}</span>
+                  <span className="leading-none">{formatSpeed(maxVal * 0.75)}</span>
+                  <span className="leading-none">{formatSpeed(maxVal * 0.5)}</span>
+                  <span className="leading-none">{formatSpeed(maxVal * 0.25)}</span>
+                  <span className="leading-none text-slate-500">0 B/s</span>
+                </div>
 
-                {/* Horizontal reference lines */}
-                {[0.25, 0.5, 0.75, 1.0].map((ratio) => {
-                  const y = padTop + plotH * (1 - ratio);
-                  const speedVal = maxVal * ratio;
-                  return (
-                    <g key={ratio}>
+                {/* SVG Oscilloscope Canvas (1:1 Native Resolution via ResizeObserver) */}
+                <div
+                  ref={canvasContainerRef}
+                  className="flex-1 h-full relative overflow-hidden cursor-crosshair"
+                  onMouseMove={handleMouseMove}
+                  onMouseLeave={() => setHoverIndex(null)}
+                >
+                  <svg
+                    viewBox={`0 0 ${canvasDims.width} ${canvasDims.height}`}
+                    className="w-full h-full block"
+                  >
+                    <defs>
+                      <linearGradient id={`chartGrad-${inline ? 'inline' : 'modal'}`} x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%" stopColor="#3b82f6" stopOpacity="0.25" />
+                        <stop offset="100%" stopColor="#3b82f6" stopOpacity="0.0" />
+                      </linearGradient>
+                    </defs>
+
+                    {/* Horizontal reference lines */}
+                    {[0.25, 0.5, 0.75, 1.0].map((ratio) => {
+                      const y = padTop + plotH * (1 - ratio);
+                      return (
+                        <line
+                          key={ratio}
+                          x1="0"
+                          y1={y}
+                          x2={canvasDims.width}
+                          y2={y}
+                          stroke="rgba(255, 255, 255, 0.06)"
+                          strokeDasharray="4 4"
+                          strokeWidth="1"
+                        />
+                      );
+                    })}
+
+                    {/* Baseline (0 B/s) */}
+                    <line
+                      x1="0"
+                      y1={padTop + plotH}
+                      x2={canvasDims.width}
+                      y2={padTop + plotH}
+                      stroke="rgba(255, 255, 255, 0.12)"
+                      strokeWidth="1"
+                    />
+
+                    {/* Area Gradient */}
+                    {areaData && (
+                      <path d={areaData} fill={`url(#chartGrad-${inline ? 'inline' : 'modal'})`} />
+                    )}
+
+                    {/* Main Speed Curve */}
+                    {pathData && (
+                      <path
+                        d={pathData}
+                        fill="none"
+                        stroke="#3b82f6"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                    )}
+
+                    {/* Average Speed Dotted Guide */}
+                    {avgSpeed > 0 && avgY >= padTop && avgY <= padTop + plotH && (
                       <line
-                        x1={padLeft}
-                        y1={y}
-                        x2={chartWidth - padRight}
-                        y2={y}
-                        stroke="rgba(255, 255, 255, 0.05)"
-                        strokeDasharray="3 3"
+                        x1="0"
+                        y1={avgY}
+                        x2={canvasDims.width}
+                        y2={avgY}
+                        stroke="rgba(148, 163, 184, 0.45)"
+                        strokeDasharray="4 4"
                         strokeWidth="1"
                       />
-                      <text
-                        x={padLeft - 6}
-                        y={y + 3}
-                        textAnchor="end"
-                        fontSize="9"
-                        fill="#64748b"
-                        fontFamily="monospace"
-                      >
-                        {formatSpeed(speedVal)}
-                      </text>
-                    </g>
-                  );
-                })}
+                    )}
 
-                {/* Baseline (0 B/s) */}
-                <line
-                  x1={padLeft}
-                  y1={padTop + plotH}
-                  x2={chartWidth - padRight}
-                  y2={padTop + plotH}
-                  stroke="rgba(255, 255, 255, 0.1)"
-                  strokeWidth="1"
-                />
-                <text
-                  x={padLeft - 6}
-                  y={padTop + plotH + 3}
-                  textAnchor="end"
-                  fontSize="9"
-                  fill="#64748b"
-                  fontFamily="monospace"
-                >
-                  0 B/s
-                </text>
+                    {/* Interactive Crosshair Line & Target Dot */}
+                    {hoverIndex !== null && points[hoverIndex] && (
+                      <g>
+                        <line
+                          x1={points[hoverIndex].x}
+                          y1={padTop}
+                          x2={points[hoverIndex].x}
+                          y2={padTop + plotH}
+                          stroke="rgba(255, 255, 255, 0.4)"
+                          strokeWidth="1"
+                          strokeDasharray="2 2"
+                        />
+                        <circle
+                          cx={points[hoverIndex].x}
+                          cy={points[hoverIndex].y}
+                          r="4"
+                          fill="#3b82f6"
+                          stroke="#ffffff"
+                          strokeWidth="2"
+                        />
+                      </g>
+                    )}
+                  </svg>
 
-                {/* Horizontal timeline ticks */}
-                {['Start', '25%', '50%', '75%', 'Latest'].map((lbl, idx) => {
-                  const x = padLeft + (idx / 4) * plotW;
-                  return (
-                    <text
-                      key={lbl}
-                      x={x}
-                      y={padTop + plotH + 16}
-                      textAnchor={idx === 0 ? 'start' : idx === 4 ? 'end' : 'middle'}
-                      fontSize="9"
-                      fill="#64748b"
-                      fontFamily="monospace"
+                  {/* High-Precision HTML Hover Tooltip (Zero distortion, perfectly centered) */}
+                  {hoverIndex !== null && points[hoverIndex] && (
+                    <div
+                      className="absolute pointer-events-none transform -translate-x-1/2 -translate-y-full bg-[#181d28]/95 border border-blue-500/40 shadow-xl px-2.5 py-1 rounded text-xs font-mono font-semibold text-blue-200 z-20 flex items-center gap-1.5 backdrop-blur-sm"
+                      style={{
+                        left: Math.max(45, Math.min(canvasDims.width - 45, points[hoverIndex].x)),
+                        top: Math.max(26, points[hoverIndex].y - 8),
+                      }}
                     >
-                      {lbl}
-                    </text>
-                  );
-                })}
+                      <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" />
+                      <span>{formatSpeed(points[hoverIndex].val)}</span>
+                    </div>
+                  )}
+                </div>
+              </div>
 
-                {/* Area Gradient */}
-                {areaData && (
-                  <path d={areaData} fill={`url(#chartGrad-${inline ? 'inline' : 'modal'})`} />
-                )}
-
-                {/* Main Speed Curve */}
-                {pathData && (
-                  <path
-                    d={pathData}
-                    fill="none"
-                    stroke="#3b82f6"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  />
-                )}
-
-                {/* Average Speed Dotted Guide */}
-                {avgSpeed > 0 && avgY >= padTop && avgY <= padTop + plotH && (
-                  <line
-                    x1={padLeft}
-                    y1={avgY}
-                    x2={chartWidth - padRight}
-                    y2={avgY}
-                    stroke="rgba(148, 163, 184, 0.45)"
-                    strokeDasharray="4 4"
-                    strokeWidth="1"
-                  />
-                )}
-
-                {/* Interactive Crosshair & Tooltip */}
-                {hoverIndex !== null && points[hoverIndex] && (
-                  <g>
-                    <line
-                      x1={points[hoverIndex].x}
-                      y1={padTop}
-                      x2={points[hoverIndex].x}
-                      y2={padTop + plotH}
-                      stroke="rgba(255, 255, 255, 0.35)"
-                      strokeWidth="1"
-                      strokeDasharray="2 2"
-                    />
-                    <circle
-                      cx={points[hoverIndex].x}
-                      cy={points[hoverIndex].y}
-                      r="4"
-                      fill="#3b82f6"
-                      stroke="#ffffff"
-                      strokeWidth="1.5"
-                    />
-                    <rect
-                      x={Math.min(chartWidth - 110, Math.max(padLeft, points[hoverIndex].x - 45))}
-                      y={Math.max(padTop + 4, points[hoverIndex].y - 28)}
-                      width="90"
-                      height="20"
-                      rx="4"
-                      fill="#1e2433"
-                      stroke="rgba(255,255,255,0.15)"
-                      strokeWidth="1"
-                    />
-                    <text
-                      x={Math.min(chartWidth - 65, Math.max(padLeft + 45, points[hoverIndex].x))}
-                      y={Math.max(padTop + 18, points[hoverIndex].y - 14)}
-                      textAnchor="middle"
-                      fontSize="10"
-                      fontWeight="600"
-                      fill="#f8fafc"
-                      fontFamily="monospace"
-                    >
-                      {formatSpeed(points[hoverIndex].val)}
-                    </text>
-                  </g>
-                )}
-              </svg>
+              {/* Horizontal Timeline Markings (Pure Un-Stretched HTML) */}
+              <div className="flex justify-between items-center pl-16 pr-1 pt-2 text-[9px] font-mono text-slate-500 select-none flex-shrink-0">
+                <span>Start</span>
+                <span>25%</span>
+                <span>50%</span>
+                <span>75%</span>
+                <span>Latest</span>
+              </div>
             </div>
           </div>
         )}

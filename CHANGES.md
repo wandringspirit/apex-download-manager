@@ -40,6 +40,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
     - Captured and parsed `stderr` stream in `YoutubeDownloader.js` to surface root causes (e.g. YouTube BotGuard bot challenge, HTTP 403 stream expiry) instead of silent failure.
     - Added `-c` (continue/resume partial `.part` downloads), `--retries 10`, `--fragment-retries 10`, and optional `cookies.txt` authentication support.
     - Added diagnostic error ribbon in `SegmentVisualizer.tsx` and hover tooltips in `DownloadTable.tsx`.
+  - **Fixed Stretched Oscilloscope Markings (HTML + 1:1 ResizeObserver Canvas)**:
+    - Eliminated horizontal text distortion where Y-axis speed labels (`6.2 MB/s`, `4.6 MB/s`, etc.) and X-axis timeline markers (`Start`, `Latest`) rendered horizontally squished/stretched on wide screens.
+    - Root cause: SVG canvas had a hardcoded `viewBox="0 0 680 135"` with `preserveAspectRatio="none"`, which scaled SVG `<text>` elements horizontally by 2.65x on 1920px+ monitors.
+    - Extracted Y-axis speed markings into an un-stretched, dedicated HTML flexbox column with crisp monospace tabular typography.
+    - Extracted timeline markings into an un-stretched HTML flexbox row.
+    - Upgraded SVG oscilloscope to dynamically track container dimensions via `ResizeObserver`, rendering 1:1 pixel coordinates without `preserveAspectRatio="none"`.
+    - Upgraded hover inspection tooltip into an HTML overlay with smooth pill styling and live pulse indicator.
 
 ### 🚀 Acceleration Engine & Core Architecture
 - **64-Thread Dynamic Bisecting Range Engine**:
