@@ -182,9 +182,17 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({
     }
     if (task.status === 'error') {
       return (
-        <div className="flex items-center gap-1.5 text-rose-400 font-medium text-[11px]">
-          <div className="w-1.5 h-1.5 rounded-full bg-rose-400" />
+        <div 
+          className="flex items-center gap-1.5 text-rose-400 font-medium text-[11px] cursor-help"
+          title={task.error ? `Error: ${task.error}` : 'Download encountered an error. Click Resume (▶) to retry.'}
+        >
+          <div className="w-1.5 h-1.5 rounded-full bg-rose-400 animate-pulse" />
           <span>Error</span>
+          {task.error && (
+            <span className="text-[9px] text-rose-300/70 font-mono max-w-[85px] truncate">
+              ({task.error.includes('BotGuard') ? 'BotGuard' : 'Failed'})
+            </span>
+          )}
         </div>
       );
     }

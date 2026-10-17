@@ -36,6 +36,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
     - **Segments Tab**: Concurrency control bar (slider + 8/16/32/64 presets), IDM-style master file memory map, and multi-socket worker cards grid.
   - Added dynamic multi-socket segment synthesis in `YoutubeDownloader.js` and `SegmentVisualizer.tsx` ensuring multi-thread partition visualization across all downloads.
   - **Fixed 64 Concurrency Revert Bug**: Resolved race condition where selecting 64 sockets immediately reverted back to 1. Replaced unsafe `task.segments.length` fallback in React lifecycle with persistent `useRef` tracking, optimistic local state updates in `App.tsx`, and state persistence in `TaskManager.loadState()`.
+  - **YouTube BotGuard Error Diagnosis & Auto-Resume**:
+    - Captured and parsed `stderr` stream in `YoutubeDownloader.js` to surface root causes (e.g. YouTube BotGuard bot challenge, HTTP 403 stream expiry) instead of silent failure.
+    - Added `-c` (continue/resume partial `.part` downloads), `--retries 10`, `--fragment-retries 10`, and optional `cookies.txt` authentication support.
+    - Added diagnostic error ribbon in `SegmentVisualizer.tsx` and hover tooltips in `DownloadTable.tsx`.
 
 ### 🚀 Acceleration Engine & Core Architecture
 - **64-Thread Dynamic Bisecting Range Engine**:

@@ -30,6 +30,7 @@ export class YoutubeDownloader extends EventEmitter {
     this.eta = 0;
     this.resumable = true;
     this.maxConnections = options.maxConnections || 32;
+    this.error = options.error || null;
     this.segments = [];
     this.process = null;
     this.createdAt = options.createdAt || new Date().toISOString();
@@ -86,14 +87,24 @@ export class YoutubeDownloader extends EventEmitter {
       '-m', 'yt_dlp',
       '--js-runtimes', 'node',
       '--extractor-args', 'youtube:player_client=android,ios,web',
+      '-c', // Continue partially downloaded files
+      '--retries', '10',
+      '--fragment-retries', '10',
+      '--file-access-retries', '5',
       '--http-chunk-size', '10M',
       '--buffer-size', '16M',
       '--newline',
       '--no-playlist',
-      '-N', '32', // 32 concurrent connection threads (Max Saturation)!
+      '-N', String(Math.min(64, Math.max(1, this.maxConnections || 32))),
       '-f', 'bestvideo+bestaudio/best',
       '--merge-output-format', 'mp4'
     ];
+
+    // Optional user cookies file for YouTube authentication
+    const cookiePath = path.join(process.cwd(), 'cookies.txt');
+    if (fs.existsSync(cookiePath)) {
+      args.push('--cookies', cookiePath);
+    }
 
     const ffmpegExe = path.join(BUNDLED_BIN_DIR, 'ffmpeg.exe');
     if (fs.existsSync(ffmpegExe)) {
@@ -148,7 +159,17 @@ export class YoutubeDownloader extends EventEmitter {
       this.emitProgress();
     });
 
-    this.process.stderr.on('data', () => {});
+    this.process.stderr.on('data', (data) => {
+      const text = data.toString();
+      if (text.includes('Sign in to confirm you') || text.includes('bot')) {
+        this.error = "YouTube BotGuard: Sign-in / session challenge triggered (rate limited)";
+      } else if (text.includes('403') || text.includes('Forbidden')) {
+        this.error = "YouTube 403 Forbidden: Stream URL expired or rate limited";
+      } else if (text.includes('ERROR:')) {
+        const line = text.split('\n').find(l => l.includes('ERROR:'));
+        if (line) this.error = line.replace('ERROR:', '').trim();
+      }
+    });
 
     this.process.on('close', (code) => {
       this.process = null;
@@ -157,6 +178,7 @@ export class YoutubeDownloader extends EventEmitter {
         this.percent = 100;
         this.speed = 0;
         this.eta = 0;
+        this.error = null;
 
         // Verify and attach exact file size from disk
         try {
@@ -184,7 +206,12 @@ export class YoutubeDownloader extends EventEmitter {
         this.emit('complete', { id: this.id, filePath: this.getFilePath() });
       } else if (this.status !== 'paused') {
         this.status = 'error';
+        if (!this.error) {
+          this.error = `Download process interrupted (exit code ${code})`;
+        }
+        this.emitProgress();
         this.emit('status', this.status);
+        this.emit('error', new Error(this.error));
       }
     });
   }
@@ -259,6 +286,7 @@ export class YoutubeDownloader extends EventEmitter {
       speedSamples: this.speedSamples,
       eta: this.eta,
       maxConnections: this.maxConnections || 32,
+      error: this.error,
       segments
     });
   }
@@ -298,6 +326,7 @@ export class YoutubeDownloader extends EventEmitter {
       speedSamples: this.speedSamples,
       eta: this.eta,
       maxConnections: this.maxConnections || 32,
+      error: this.error,
       resumable: true,
       segments,
       createdAt: this.createdAt

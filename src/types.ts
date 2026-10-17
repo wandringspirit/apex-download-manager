@@ -27,6 +27,7 @@ export interface DownloadItem {
   resumable: boolean;
   maxConnections?: number;
   throttledReason?: string;
+  error?: string;
   segments?: Segment[];
   createdAt: string;
 }

@@ -312,11 +312,25 @@ export const SegmentVisualizer: React.FC<SegmentVisualizerProps> = ({
       <div className="w-full h-1 bg-[#101319] flex-shrink-0 overflow-hidden">
         <div
           className={`h-full transition-all duration-300 ${
-            task.status === 'completed' ? 'bg-emerald-500' : 'bg-blue-600'
+            task.status === 'completed' ? 'bg-emerald-500' : task.status === 'error' ? 'bg-rose-500' : 'bg-blue-600'
           }`}
           style={{ width: `${percentStr}%` }}
         />
       </div>
+
+      {/* Error Diagnostic Ribbon */}
+      {task.error && (
+        <div className="bg-rose-500/10 border-b border-rose-500/20 px-4 py-1.5 flex items-center justify-between text-[11px] text-rose-300 font-mono flex-shrink-0">
+          <div className="flex items-center gap-2 truncate">
+            <span className="w-1.5 h-1.5 rounded-full bg-rose-400 animate-pulse flex-shrink-0" />
+            <span className="font-semibold text-rose-200 flex-shrink-0">Issue:</span>
+            <span className="truncate text-rose-300">{task.error}</span>
+          </div>
+          <span className="text-[10px] text-slate-400 flex-shrink-0 font-sans ml-2">
+            Click Resume to retry
+          </span>
+        </div>
+      )}
 
       {/* 3. DEDICATED TAB VIEW AREA (Zero Shared Clutter!) */}
       <div className="flex-1 p-3.5 overflow-hidden flex flex-col min-h-0 bg-[#0d1015]">
