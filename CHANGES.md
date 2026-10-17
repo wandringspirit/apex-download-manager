@@ -45,6 +45,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - **Manifest V3 Video Grabber Badge**:
   - Redesigned floating badge from retro Windows XP style to modern dark frosted glass (`rgba(15,23,42,0.94)`, `backdrop-filter: blur(14px)`).
   - Added resolution quality tags (`1080p FHD`, `720p HD`, `480p SD`, `MP3 Audio`).
+  - **YouTube DOM Persistence & Self-Healing**: Fixed issue where YouTube wipes `#movie_player` innerHTML upon transitioning from buffering to `playing`/`loadeddata`. Implemented reactive event listeners and self-healing attachment logic.
+  - **Automated DOM Mutation Tests**: Added TC-14 (`#movie_player` container boundary isolation), TC-15 (DOM re-render detachment self-healing), and TC-16 (user dismissal lifecycle).
 
 ---
 

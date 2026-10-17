@@ -13,7 +13,7 @@ npm test
 
 ### Test Execution Summary:
 - **Test Suites**: 3
-- **Total Test Cases**: 13
+- **Total Test Cases**: 16
 - **Execution Time**: ~2.5 seconds
 - **External Dependencies**: Zero (uses native Node.js HTTP/FS/crypto APIs)
 
@@ -52,6 +52,9 @@ npm test
 | :--- | :--- | :--- |
 | **TC-11** | Bridge Server Accepts Video Grabber POST Payloads | Tests `POST /api/download` from the browser extension and validates JSON payload ingestion. |
 | **TC-12** | URL Sanitization & Auto-Category Detection | Tests classification logic mapping URLs to categories (`Video`, `Compressed`, `Programs`, `Documents`). |
+| **TC-14** | Accurate YouTube `#movie_player` Container Resolution | Verifies `findBestPlayerContainer` terminates strictly at `#movie_player` and never walks out of the player into page wrappers. |
+| **TC-15** | Floating Grabber Self-Healing Across Video Load & DOM Re-renders | Emulates YouTube DOM wipes upon `playing` / `loadeddata` events and asserts that the grabber detects detachment and immediately re-attaches to the active player. |
+| **TC-16** | User Explicit Dismissal (Close "X") Lifecycle | Verifies that clicking `×` sets `_adm_dismissed` and prevents the grabber from resurrecting during subsequent playback cycles. |
 
 ---
 
