@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { 
   X, Activity, Cpu, Sliders, HardDrive, Wifi, TrendingUp, 
-  BarChart2, Maximize2, ExternalLink, CheckCircle, Clock
+  BarChart2, Maximize2, ExternalLink, CheckCircle, Clock, Zap
 } from 'lucide-react';
 import { DownloadItem } from '../types';
 import { formatBytes, formatSpeed, formatEta } from '../utils';
@@ -33,21 +33,13 @@ export const SegmentVisualizer: React.FC<SegmentVisualizerProps> = ({
   const [hoverIndex, setHoverIndex] = useState<number | null>(null);
   const [sliderVal, setSliderVal] = useState<number>(32);
 
-  const segments = useMemo(() => {
-    if (!task || !task.segments) return [];
-    return task.segments.map((seg, idx) => {
-      if (typeof seg === 'object' && seg !== null) return seg;
-      return { id: idx, start: 0, end: 0, current: 0, completed: true, active: false };
-    });
-  }, [task?.segments]);
-
   useEffect(() => {
-    if (task?.maxConnections) {
+    if (task?.maxConnections && task.maxConnections > 0) {
       setSliderVal(task.maxConnections);
-    } else if (segments.length > 0) {
-      setSliderVal(segments.length);
+    } else if (task?.segments && task.segments.length > 0) {
+      setSliderVal(task.segments.length);
     }
-  }, [task?.maxConnections, segments.length]);
+  }, [task?.maxConnections, task?.segments?.length]);
 
   // Guaranteed precise percentage string
   const percentStr = useMemo(() => {
@@ -61,7 +53,51 @@ export const SegmentVisualizer: React.FC<SegmentVisualizerProps> = ({
     return '0.0';
   }, [task?.percent, task?.status, task?.downloadedBytes, task?.totalBytes]);
 
-  // Stack-safe speed telemetry calculation
+  // Dynamic multi-socket segment partitioning
+  const effectiveSegments = useMemo(() => {
+    if (task?.segments && task.segments.length > 1) {
+      return task.segments.map((seg, idx) => {
+        if (typeof seg === 'object' && seg !== null) return seg;
+        return { id: idx, start: 0, end: 0, current: 0, completed: true, active: false };
+      });
+    }
+
+    // Synthesize proportional multi-socket partitions for YouTube / single-stream downloads
+    const count = Math.max(1, sliderVal);
+    const total = task?.totalBytes || 100;
+    const downloaded = task?.downloadedBytes || (task?.percent ? Math.round((total * task.percent) / 100) : 0);
+    const chunkSize = Math.max(1, Math.floor(total / count));
+
+    return Array.from({ length: count }, (_, i) => {
+      const segStart = i * chunkSize;
+      const segEnd = (i === count - 1) ? total - 1 : (segStart + chunkSize - 1);
+      let segCurrent = segStart;
+      let completed = false;
+      let active = false;
+
+      if (task?.status === 'completed' || task?.percent === 100) {
+        segCurrent = segEnd + 1;
+        completed = true;
+      } else if (downloaded >= segEnd) {
+        segCurrent = segEnd + 1;
+        completed = true;
+      } else if (downloaded > segStart) {
+        segCurrent = Math.min(segEnd, downloaded);
+        active = task?.status === 'downloading';
+      }
+
+      return {
+        id: i,
+        start: segStart,
+        end: segEnd,
+        current: segCurrent,
+        completed,
+        active
+      };
+    });
+  }, [task?.segments, sliderVal, task?.totalBytes, task?.downloadedBytes, task?.percent, task?.status]);
+
+  // Speed telemetry calculation
   const samples = useMemo(() => {
     if (!task) return [0, 0];
     if (task.speedSamples && task.speedSamples.length > 1) {
@@ -92,13 +128,13 @@ export const SegmentVisualizer: React.FC<SegmentVisualizerProps> = ({
     return Math.round(nonZero.reduce((a, b) => a + b, 0) / nonZero.length);
   }, [task?.avgSpeed, samples, task?.speed]);
 
-  // Chart dimensions & scaling
-  const chartWidth = 580;
-  const chartHeight = inline ? 120 : 150;
-  const padLeft = 60;
-  const padRight = 15;
-  const padTop = 15;
-  const padBottom = 25;
+  // SVG Chart dimensions & scaling
+  const chartWidth = 680;
+  const chartHeight = inline ? 135 : 160;
+  const padLeft = 64;
+  const padRight = 16;
+  const padTop = 14;
+  const padBottom = 24;
   const plotW = chartWidth - padLeft - padRight;
   const plotH = chartHeight - padTop - padBottom;
 
@@ -159,9 +195,10 @@ export const SegmentVisualizer: React.FC<SegmentVisualizerProps> = ({
   };
 
   const content = (
-    <div className={`flex flex-col select-none font-sans text-slate-200 ${inline ? 'h-full bg-[#11141a]' : 'w-full max-w-2xl bg-[#11141a] border border-white/10 rounded-lg shadow-2xl overflow-hidden'}`}>
-      {/* 1. Clean Structured Header */}
-      <div className={`px-4 py-2.5 bg-[#0e1015] border-b border-white/10 flex items-center justify-between ${inline ? 'h-11' : 'px-5 py-3'}`}>
+    <div className={`flex flex-col select-none font-sans text-slate-200 ${inline ? 'h-full bg-[#11141a]' : 'w-full max-w-3xl bg-[#11141a] border border-white/10 rounded-lg shadow-2xl overflow-hidden'}`}>
+      
+      {/* 1. Header with Clear Distinct Tab Buttons */}
+      <div className={`px-4 py-2 bg-[#0e1015] border-b border-white/10 flex items-center justify-between flex-shrink-0 ${inline ? 'h-11' : 'px-5 py-3'}`}>
         <div className="flex items-center gap-2.5 truncate max-w-md">
           <div className="w-5 h-5 rounded bg-blue-500/15 border border-blue-500/30 flex items-center justify-center text-blue-400 flex-shrink-0">
             <Activity className="w-3 h-3 stroke-[2]" />
@@ -177,27 +214,29 @@ export const SegmentVisualizer: React.FC<SegmentVisualizerProps> = ({
         </div>
 
         <div className="flex items-center gap-2">
-          {/* Segmented Tab Control (Linear style) */}
+          {/* Distinct Tab Control */}
           <div className="flex items-center bg-[#181b22] p-0.5 rounded border border-white/10 text-xs">
             <button
               onClick={() => setActiveTab('chart')}
-              className={`px-3 py-1 rounded text-[11px] font-medium transition cursor-pointer ${
+              className={`flex items-center gap-1.5 px-3 py-1 rounded text-[11px] font-medium transition cursor-pointer ${
                 activeTab === 'chart'
-                  ? 'bg-blue-600 text-white shadow-sm'
+                  ? 'bg-blue-600 text-white font-semibold shadow-sm'
                   : 'text-slate-400 hover:text-slate-200'
               }`}
             >
-              Speed Chart
+              <Activity className="w-3.5 h-3.5" />
+              <span>Speed Chart</span>
             </button>
             <button
               onClick={() => setActiveTab('segments')}
-              className={`px-3 py-1 rounded text-[11px] font-medium transition cursor-pointer ${
+              className={`flex items-center gap-1.5 px-3 py-1 rounded text-[11px] font-medium transition cursor-pointer ${
                 activeTab === 'segments'
-                  ? 'bg-blue-600 text-white shadow-sm'
+                  ? 'bg-blue-600 text-white font-semibold shadow-sm'
                   : 'text-slate-400 hover:text-slate-200'
               }`}
             >
-              Segments ({segments.length || sliderVal})
+              <Sliders className="w-3.5 h-3.5" />
+              <span>Segments ({effectiveSegments.length})</span>
             </button>
           </div>
 
@@ -206,7 +245,7 @@ export const SegmentVisualizer: React.FC<SegmentVisualizerProps> = ({
             <button
               onClick={onPopOut}
               className="p-1.5 rounded hover:bg-white/5 text-slate-400 hover:text-white transition cursor-pointer"
-              title="Pop out modal"
+              title="Maximize Inspector"
             >
               <Maximize2 className="w-3.5 h-3.5" />
             </button>
@@ -223,144 +262,98 @@ export const SegmentVisualizer: React.FC<SegmentVisualizerProps> = ({
         </div>
       </div>
 
-      {/* 2. Main Body */}
-      <div className={`p-4 space-y-3 overflow-y-auto flex-1 ${inline ? 'p-3 space-y-2' : ''}`}>
-        {/* Precision Telemetry Row (Calm, Neutral, No Neon Slop) */}
-        <div className="grid grid-cols-4 gap-2">
-          <div className="bg-[#161922] border border-white/5 p-2.5 rounded">
-            <div className="text-[10px] text-slate-400 font-medium uppercase tracking-wider">
-              {task.status === 'completed' ? 'Final Rate' : 'Current Rate'}
-            </div>
-            <div className="text-base font-semibold text-slate-100 font-mono mt-0.5 tabular-nums">
+      {/* 2. Persistent Sleek Telemetry Ribbon (Takes only 32px) */}
+      <div className="bg-[#141720] border-b border-white/5 px-4 py-1.5 flex items-center justify-between text-[11px] font-mono flex-shrink-0">
+        <div className="flex items-center gap-4 text-slate-400">
+          <div className="flex items-center gap-1.5">
+            <span className="text-[10px] text-slate-500 uppercase font-sans">Current:</span>
+            <span className="text-slate-100 font-semibold tabular-nums">
               {formatSpeed(task.speed || avgSpeed)}
-            </div>
+            </span>
           </div>
-
-          <div className="bg-[#161922] border border-white/5 p-2.5 rounded">
-            <div className="text-[10px] text-slate-400 font-medium uppercase tracking-wider">
-              Peak Transfer Rate
-            </div>
-            <div className="text-base font-semibold text-slate-100 font-mono mt-0.5 tabular-nums">
-              {formatSpeed(peakSpeed)}
-            </div>
+          <span className="text-white/10">|</span>
+          <div className="flex items-center gap-1.5">
+            <span className="text-[10px] text-slate-500 uppercase font-sans">Peak:</span>
+            <span className="text-slate-200 tabular-nums">{formatSpeed(peakSpeed)}</span>
           </div>
-
-          <div className="bg-[#161922] border border-white/5 p-2.5 rounded">
-            <div className="text-[10px] text-slate-400 font-medium uppercase tracking-wider">
-              Average Rate
-            </div>
-            <div className="text-base font-semibold text-slate-100 font-mono mt-0.5 tabular-nums">
-              {formatSpeed(avgSpeed)}
-            </div>
+          <span className="text-white/10">|</span>
+          <div className="flex items-center gap-1.5">
+            <span className="text-[10px] text-slate-500 uppercase font-sans">Avg:</span>
+            <span className="text-slate-200 tabular-nums">{formatSpeed(avgSpeed)}</span>
           </div>
-
-          <div className="bg-[#161922] border border-white/5 p-2.5 rounded">
-            <div className="text-[10px] text-slate-400 font-medium uppercase tracking-wider">
-              {task.status === 'completed' ? 'Status' : 'Time Remaining'}
-            </div>
-            <div className="text-base font-semibold text-slate-100 font-mono mt-0.5 tabular-nums">
+          <span className="text-white/10">|</span>
+          <div className="flex items-center gap-1.5">
+            <span className="text-[10px] text-slate-500 uppercase font-sans">ETA:</span>
+            <span className="text-slate-200 tabular-nums">
               {task.status === 'completed' ? 'Completed' : formatEta(task.eta)}
-            </div>
+            </span>
           </div>
         </div>
 
-        {/* Master Progress Bar (Hairline, Solid Color) */}
-        <div>
-          <div className="flex justify-between text-[11px] font-mono text-slate-400 mb-1">
-            <span>Overall Progress</span>
-            <span className="font-semibold text-slate-200 tabular-nums">{percentStr}%</span>
-          </div>
-          <div className="w-full h-1.5 bg-[#181c24] border border-white/5 rounded-full overflow-hidden">
-            <div
-              className={`h-full rounded-full transition-all duration-200 ${
-                task.status === 'completed' ? 'bg-emerald-500' : 'bg-blue-600'
-              }`}
-              style={{ width: `${percentStr}%` }}
-            />
-          </div>
-        </div>
-
-        {/* Concurrency Settings (Clean, Engineered, No Gimmicks) */}
-        <div className="bg-[#161922] border border-white/5 p-2.5 rounded space-y-2">
+        <div className="flex items-center gap-3">
           {task.throttledReason && (
-            <div className="px-2 py-1 rounded bg-amber-500/10 border border-amber-500/20 flex items-center justify-between text-[10px] font-mono text-amber-300">
-              <span>{task.throttledReason}</span>
-              <span className="text-[9px] px-1 py-0.5 rounded bg-amber-500/20 text-amber-200">
-                Rate Limit Step-Down Active
-              </span>
-            </div>
+            <span className="px-1.5 py-0.5 rounded bg-amber-500/15 border border-amber-500/30 text-[9px] text-amber-300 font-mono">
+              Auto-Throttled (429)
+            </span>
           )}
-
-          <div className="flex items-center justify-between text-xs">
-            <div className="flex items-center gap-2">
-              <span className="font-medium text-slate-300 text-[11px]">Parallel Sockets:</span>
-              <span className="font-mono text-[11px] text-blue-400 font-bold px-1.5 py-0.5 rounded bg-blue-500/10 border border-blue-500/20">
-                {sliderVal} Threads
-              </span>
-            </div>
-
-            {/* Presets (Clean, No Emojis) */}
-            <div className="flex items-center gap-1">
-              {[
-                { count: 8, label: '8 Safe' },
-                { count: 16, label: '16 Balanced' },
-                { count: 32, label: '32 Default' },
-                { count: 64, label: '64 Maximum' }
-              ].map((p) => (
-                <button
-                  key={p.count}
-                  onClick={() => handleSliderChange(p.count)}
-                  className={`px-2 py-0.5 rounded text-[10px] font-mono transition cursor-pointer ${
-                    sliderVal === p.count
-                      ? 'bg-blue-600 text-white font-semibold'
-                      : 'bg-[#1e232f] hover:bg-[#282f3f] text-slate-300 border border-white/5'
-                  }`}
-                >
-                  {p.label}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <input
-            type="range"
-            min="1"
-            max="64"
-            step="1"
-            value={sliderVal}
-            onChange={(e) => handleSliderChange(parseInt(e.target.value, 10))}
-            className="w-full h-1 bg-[#202533] rounded appearance-none cursor-pointer accent-blue-500"
-          />
+          <span className="text-blue-400 font-semibold tabular-nums text-xs">
+            {percentStr}%
+          </span>
         </div>
+      </div>
 
-        {/* TAB 1: Speed Timeline Oscilloscope Chart */}
+      {/* Hairline 1.5px Progress Bar */}
+      <div className="w-full h-1 bg-[#101319] flex-shrink-0 overflow-hidden">
+        <div
+          className={`h-full transition-all duration-300 ${
+            task.status === 'completed' ? 'bg-emerald-500' : 'bg-blue-600'
+          }`}
+          style={{ width: `${percentStr}%` }}
+        />
+      </div>
+
+      {/* 3. DEDICATED TAB VIEW AREA (Zero Shared Clutter!) */}
+      <div className="flex-1 p-3.5 overflow-hidden flex flex-col min-h-0 bg-[#0d1015]">
+        
+        {/* ========================================================= */}
+        {/* TAB 1: TRANSFER RATE WAVEFORM MONITOR (SPEED CHART HERO) */}
+        {/* ========================================================= */}
         {activeTab === 'chart' && (
-          <div className="bg-[#161922] border border-white/5 rounded p-2.5">
-            <div className="flex items-center justify-between mb-1.5 text-xs">
-              <span className="text-slate-300 text-[11px] font-medium">Transfer Rate Waveform ({samples.length} points)</span>
+          <div className="flex-1 flex flex-col bg-[#141720] border border-white/5 rounded-lg p-3 min-h-0">
+            <div className="flex items-center justify-between mb-2 text-xs flex-shrink-0">
+              <div className="flex items-center gap-2">
+                <span className="text-slate-200 font-medium text-xs">Transfer Rate Oscilloscope</span>
+                <span className="text-[10px] text-slate-500 font-mono">({samples.length} real-time samples)</span>
+              </div>
               <div className="flex items-center gap-3 text-[10px] font-mono">
-                <span className="text-slate-400">Peak: <span className="text-slate-200 font-semibold">{formatSpeed(peakSpeed)}</span></span>
-                <span className="text-slate-400">Avg: <span className="text-slate-200 font-semibold">{formatSpeed(avgSpeed)}</span></span>
+                <div className="flex items-center gap-1">
+                  <span className="w-2 h-0.5 bg-blue-500 inline-block" />
+                  <span className="text-slate-400">Current Rate</span>
+                </div>
+                <div className="flex items-center gap-1">
+                  <span className="w-2 h-0.5 border-b border-dashed border-slate-400 inline-block" />
+                  <span className="text-slate-400">Average Rate ({formatSpeed(avgSpeed)})</span>
+                </div>
               </div>
             </div>
 
-            {/* Precision SVG Chart */}
-            <div className="relative w-full overflow-hidden">
+            {/* Precision Interactive SVG Oscilloscope */}
+            <div className="relative w-full flex-1 min-h-0 overflow-hidden bg-[#0c0e14] rounded border border-white/5 flex items-center justify-center">
               <svg
                 viewBox={`0 0 ${chartWidth} ${chartHeight}`}
-                className="w-full select-none cursor-crosshair"
-                style={{ height: inline ? '110px' : '140px' }}
+                preserveAspectRatio="none"
+                className="w-full h-full select-none cursor-crosshair"
                 onMouseMove={handleMouseMove}
                 onMouseLeave={() => setHoverIndex(null)}
               >
                 <defs>
                   <linearGradient id={`chartGrad-${inline ? 'inline' : 'modal'}`} x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor="#3b82f6" stopOpacity="0.18" />
+                    <stop offset="0%" stopColor="#3b82f6" stopOpacity="0.25" />
                     <stop offset="100%" stopColor="#3b82f6" stopOpacity="0.0" />
                   </linearGradient>
                 </defs>
 
-                {/* Gridlines with tabular labels */}
+                {/* Horizontal reference lines */}
                 {[0.25, 0.5, 0.75, 1.0].map((ratio) => {
                   const y = padTop + plotH * (1 - ratio);
                   const speedVal = maxVal * ratio;
@@ -372,7 +365,7 @@ export const SegmentVisualizer: React.FC<SegmentVisualizerProps> = ({
                         x2={chartWidth - padRight}
                         y2={y}
                         stroke="rgba(255, 255, 255, 0.05)"
-                        strokeDasharray="2 3"
+                        strokeDasharray="3 3"
                         strokeWidth="1"
                       />
                       <text
@@ -389,13 +382,13 @@ export const SegmentVisualizer: React.FC<SegmentVisualizerProps> = ({
                   );
                 })}
 
-                {/* Base 0 Line */}
+                {/* Baseline (0 B/s) */}
                 <line
                   x1={padLeft}
                   y1={padTop + plotH}
                   x2={chartWidth - padRight}
                   y2={padTop + plotH}
-                  stroke="rgba(255, 255, 255, 0.08)"
+                  stroke="rgba(255, 255, 255, 0.1)"
                   strokeWidth="1"
                 />
                 <text
@@ -409,7 +402,7 @@ export const SegmentVisualizer: React.FC<SegmentVisualizerProps> = ({
                   0 B/s
                 </text>
 
-                {/* Timeline axis labels */}
+                {/* Horizontal timeline ticks */}
                 {['Start', '25%', '50%', '75%', 'Latest'].map((lbl, idx) => {
                   const x = padLeft + (idx / 4) * plotW;
                   return (
@@ -427,37 +420,37 @@ export const SegmentVisualizer: React.FC<SegmentVisualizerProps> = ({
                   );
                 })}
 
-                {/* Subtle area gradient */}
+                {/* Area Gradient */}
                 {areaData && (
                   <path d={areaData} fill={`url(#chartGrad-${inline ? 'inline' : 'modal'})`} />
                 )}
 
-                {/* Crisp single-hue line */}
+                {/* Main Speed Curve */}
                 {pathData && (
                   <path
                     d={pathData}
                     fill="none"
                     stroke="#3b82f6"
-                    strokeWidth="1.75"
+                    strokeWidth="2"
                     strokeLinecap="round"
                     strokeLinejoin="round"
                   />
                 )}
 
-                {/* Average Dotted Guide */}
+                {/* Average Speed Dotted Guide */}
                 {avgSpeed > 0 && avgY >= padTop && avgY <= padTop + plotH && (
                   <line
                     x1={padLeft}
                     y1={avgY}
                     x2={chartWidth - padRight}
                     y2={avgY}
-                    stroke="rgba(148, 163, 184, 0.4)"
+                    stroke="rgba(148, 163, 184, 0.45)"
                     strokeDasharray="4 4"
                     strokeWidth="1"
                   />
                 )}
 
-                {/* Precision Crosshair */}
+                {/* Interactive Crosshair & Tooltip */}
                 {hoverIndex !== null && points[hoverIndex] && (
                   <g>
                     <line
@@ -465,24 +458,36 @@ export const SegmentVisualizer: React.FC<SegmentVisualizerProps> = ({
                       y1={padTop}
                       x2={points[hoverIndex].x}
                       y2={padTop + plotH}
-                      stroke="rgba(255, 255, 255, 0.3)"
+                      stroke="rgba(255, 255, 255, 0.35)"
                       strokeWidth="1"
+                      strokeDasharray="2 2"
                     />
                     <circle
                       cx={points[hoverIndex].x}
                       cy={points[hoverIndex].y}
-                      r="3.5"
+                      r="4"
                       fill="#3b82f6"
                       stroke="#ffffff"
                       strokeWidth="1.5"
                     />
+                    <rect
+                      x={Math.min(chartWidth - 110, Math.max(padLeft, points[hoverIndex].x - 45))}
+                      y={Math.max(padTop + 4, points[hoverIndex].y - 28)}
+                      width="90"
+                      height="20"
+                      rx="4"
+                      fill="#1e2433"
+                      stroke="rgba(255,255,255,0.15)"
+                      strokeWidth="1"
+                    />
                     <text
-                      x={Math.min(chartWidth - 80, Math.max(padLeft + 10, points[hoverIndex].x))}
-                      y={Math.max(padTop + 14, points[hoverIndex].y - 8)}
+                      x={Math.min(chartWidth - 65, Math.max(padLeft + 45, points[hoverIndex].x))}
+                      y={Math.max(padTop + 18, points[hoverIndex].y - 14)}
                       textAnchor="middle"
                       fontSize="10"
                       fontWeight="600"
-                      fill="#ffffff"
+                      fill="#f8fafc"
+                      fontFamily="monospace"
                     >
                       {formatSpeed(points[hoverIndex].val)}
                     </text>
@@ -493,48 +498,143 @@ export const SegmentVisualizer: React.FC<SegmentVisualizerProps> = ({
           </div>
         )}
 
-        {/* TAB 2: Dynamic File Segments Grid */}
+        {/* ========================================================= */}
+        {/* TAB 2: RANGE PARTITIONS & SOCKETS (SEGMENTS HERO)        */}
+        {/* ========================================================= */}
         {activeTab === 'segments' && (
-          <div className="bg-[#161922] border border-white/5 rounded p-2.5 space-y-2">
-            <div className="flex items-center justify-between text-xs">
-              <span className="font-medium text-slate-300 text-[11px]">
-                Range Partitions ({segments.length} Concurrent Workers)
-              </span>
-              <span className="text-[10px] text-slate-500 font-mono">
-                Direct Absolute Offset File Writing
-              </span>
+          <div className="flex-1 flex flex-col bg-[#141720] border border-white/5 rounded-lg p-3 min-h-0 space-y-2.5">
+            
+            {/* Parallel Sockets Concurrency Controller Bar */}
+            <div className="bg-[#181c26] border border-white/5 p-2.5 rounded flex items-center justify-between flex-shrink-0 gap-4">
+              <div className="flex items-center gap-2 flex-shrink-0">
+                <span className="font-medium text-slate-300 text-xs">Parallel Sockets:</span>
+                <span className="font-mono text-xs text-blue-400 font-bold px-2 py-0.5 rounded bg-blue-500/10 border border-blue-500/20">
+                  {sliderVal} Threads
+                </span>
+              </div>
+
+              {/* Concurrency Range Slider */}
+              <div className="flex-1 max-w-xs">
+                <input
+                  type="range"
+                  min="1"
+                  max="64"
+                  step="1"
+                  value={sliderVal}
+                  onChange={(e) => handleSliderChange(parseInt(e.target.value, 10))}
+                  className="w-full h-1 bg-[#282f42] rounded appearance-none cursor-pointer accent-blue-500"
+                />
+              </div>
+
+              {/* Quick Presets */}
+              <div className="flex items-center gap-1 flex-shrink-0">
+                {[
+                  { count: 8, label: '8 Safe' },
+                  { count: 16, label: '16 Balanced' },
+                  { count: 32, label: '32 Default' },
+                  { count: 64, label: '64 Maximum' }
+                ].map((p) => (
+                  <button
+                    key={p.count}
+                    onClick={() => handleSliderChange(p.count)}
+                    className={`px-2 py-1 rounded text-[10px] font-mono transition cursor-pointer ${
+                      sliderVal === p.count
+                        ? 'bg-blue-600 text-white font-semibold'
+                        : 'bg-[#202534] hover:bg-[#2b3245] text-slate-300 border border-white/5'
+                    }`}
+                  >
+                    {p.label}
+                  </button>
+                ))}
+              </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-1.5 max-h-40 overflow-y-auto pr-1">
-              {segments.map((seg, idx) => {
-                const total = seg.end - seg.start;
-                const done = seg.current - seg.start;
-                const segPercent = total > 0 ? Math.min(100, Math.max(0, Math.round((done / total) * 100))) : 100;
-                return (
-                  <div key={idx} className="p-1.5 bg-[#1a1e28] rounded border border-white/5 text-[10px] space-y-1">
-                    <div className="flex items-center justify-between font-mono">
-                      <span className="text-slate-300 font-medium">Socket #{idx + 1}</span>
-                      <span className={seg.completed ? 'text-emerald-400 font-semibold' : 'text-blue-400'}>
-                        {segPercent}% {seg.completed ? '(Done)' : ''}
-                      </span>
-                    </div>
-                    <div className="w-full h-1 bg-[#101319] rounded-full overflow-hidden">
-                      <div
-                        className={`h-full rounded-full transition-all duration-200 ${seg.completed ? 'bg-emerald-500' : 'bg-blue-600'}`}
-                        style={{ width: `${segPercent}%` }}
-                      />
-                    </div>
-                  </div>
-                );
-              })}
+            {/* IDM Signature Master File Memory Map Strip */}
+            <div className="bg-[#181c26] border border-white/5 p-2 rounded flex-shrink-0">
+              <div className="flex items-center justify-between text-[10px] text-slate-400 font-mono mb-1.5">
+                <span>File Memory Map ({effectiveSegments.length} Partitions)</span>
+                <div className="flex items-center gap-3">
+                  <span className="flex items-center gap-1">
+                    <span className="w-2 h-2 rounded-sm bg-emerald-500 inline-block" />
+                    <span>Completed</span>
+                  </span>
+                  <span className="flex items-center gap-1">
+                    <span className="w-2 h-2 rounded-sm bg-blue-500 inline-block" />
+                    <span>Active Stream</span>
+                  </span>
+                  <span className="flex items-center gap-1">
+                    <span className="w-2 h-2 rounded-sm bg-[#282f40] inline-block" />
+                    <span>Pending</span>
+                  </span>
+                </div>
+              </div>
+
+              {/* Segmented Block Bar */}
+              <div className="flex w-full h-3 rounded bg-[#0f1118] border border-white/5 overflow-hidden gap-[1px]">
+                {effectiveSegments.map((seg, idx) => (
+                  <div
+                    key={idx}
+                    className={`flex-1 h-full transition-colors ${
+                      seg.completed
+                        ? 'bg-emerald-500'
+                        : seg.active
+                        ? 'bg-blue-500 animate-pulse'
+                        : 'bg-[#202534]'
+                    }`}
+                    title={`Socket #${idx + 1}: ${formatBytes(seg.start)} - ${formatBytes(seg.end)} ${seg.completed ? '(Complete)' : seg.active ? '(Active)' : '(Queued)'}`}
+                  />
+                ))}
+              </div>
             </div>
+
+            {/* Socket Workers Cards Grid */}
+            <div className="flex-1 overflow-y-auto pr-1 min-h-0">
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-1.5">
+                {effectiveSegments.map((seg, idx) => {
+                  const total = seg.end - seg.start + 1;
+                  const done = Math.max(0, seg.current - seg.start);
+                  const segPercent = total > 0 ? Math.min(100, Math.max(0, Math.round((done / total) * 100))) : 100;
+                  const isDone = seg.completed || segPercent >= 100;
+
+                  return (
+                    <div
+                      key={idx}
+                      className="p-2 bg-[#181c26] rounded border border-white/5 text-[10px] space-y-1.5"
+                    >
+                      <div className="flex items-center justify-between font-mono">
+                        <span className="text-slate-300 font-semibold">Socket #{idx + 1}</span>
+                        <span className={isDone ? 'text-emerald-400 font-bold' : seg.active ? 'text-blue-400 font-semibold' : 'text-slate-500'}>
+                          {isDone ? '100%' : `${segPercent}%`}
+                        </span>
+                      </div>
+
+                      <div className="w-full h-1 bg-[#0f1118] rounded-full overflow-hidden">
+                        <div
+                          className={`h-full rounded-full transition-all duration-200 ${
+                            isDone ? 'bg-emerald-500' : seg.active ? 'bg-blue-600' : 'bg-slate-700'
+                          }`}
+                          style={{ width: `${isDone ? 100 : segPercent}%` }}
+                        />
+                      </div>
+
+                      <div className="flex items-center justify-between text-[9px] text-slate-500 font-mono truncate">
+                        <span>{formatBytes(seg.start)}</span>
+                        <span>{formatBytes(seg.end)}</span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
           </div>
         )}
+
       </div>
 
-      {/* 3. Footer */}
-      <div className={`px-4 py-2 bg-[#0e1015] border-t border-white/10 flex items-center justify-between text-xs ${inline ? 'h-9' : 'px-5 py-3'}`}>
-        <div className="text-[11px] text-slate-400 truncate max-w-xs font-mono" title={task.savePath}>
+      {/* 4. Footer */}
+      <div className={`px-4 py-2 bg-[#0e1015] border-t border-white/10 flex items-center justify-between text-xs flex-shrink-0 ${inline ? 'h-10' : 'px-5 py-3'}`}>
+        <div className="text-[11px] text-slate-400 truncate max-w-sm font-mono" title={task.savePath}>
           Destination: {task.savePath}
         </div>
         <div className="flex items-center gap-2">
@@ -585,14 +685,14 @@ export const SegmentVisualizer: React.FC<SegmentVisualizerProps> = ({
 
   if (inline) {
     return (
-      <div className="w-full border-t border-white/10 bg-[#11141a] flex flex-col flex-shrink-0 select-none overflow-hidden h-72">
+      <div className="w-full border-t border-white/10 bg-[#11141a] flex flex-col flex-shrink-0 select-none overflow-hidden h-[340px]">
         {content}
       </div>
     );
   }
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
+    <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
       {content}
     </div>
   );

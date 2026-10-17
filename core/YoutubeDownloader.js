@@ -29,6 +29,7 @@ export class YoutubeDownloader extends EventEmitter {
     this.speedSampleCount = 0;
     this.eta = 0;
     this.resumable = true;
+    this.maxConnections = options.maxConnections || 32;
     this.segments = [];
     this.process = null;
     this.createdAt = options.createdAt || new Date().toISOString();
@@ -214,9 +215,42 @@ export class YoutubeDownloader extends EventEmitter {
   }
 
   emitProgress() {
+    const downloaded = this.totalBytes ? Math.round((this.totalBytes * this.percent) / 100) : 0;
+    const numSegments = Math.max(1, this.maxConnections || 32);
+    const total = this.totalBytes || 100;
+    const chunkSize = Math.max(1, Math.floor(total / numSegments));
+    
+    const segments = Array.from({ length: numSegments }, (_, i) => {
+      const segStart = i * chunkSize;
+      const segEnd = (i === numSegments - 1) ? total - 1 : (segStart + chunkSize - 1);
+      let segCurrent = segStart;
+      let completed = false;
+      let active = false;
+
+      if (this.percent >= 100 || this.status === 'completed') {
+        segCurrent = segEnd + 1;
+        completed = true;
+      } else if (downloaded >= segEnd) {
+        segCurrent = segEnd + 1;
+        completed = true;
+      } else if (downloaded > segStart) {
+        segCurrent = Math.min(segEnd, downloaded);
+        active = this.status === 'downloading';
+      }
+
+      return {
+        id: i,
+        start: segStart,
+        end: segEnd,
+        current: segCurrent,
+        active,
+        completed
+      };
+    });
+
     this.emit('progress', {
       id: this.id,
-      downloadedBytes: this.totalBytes ? Math.round((this.totalBytes * this.percent) / 100) : 0,
+      downloadedBytes: downloaded,
       totalBytes: this.totalBytes,
       percent: this.percent,
       speed: this.speed,
@@ -224,21 +258,29 @@ export class YoutubeDownloader extends EventEmitter {
       avgSpeed: this.avgSpeed,
       speedSamples: this.speedSamples,
       eta: this.eta,
-      segments: [
-        {
-          id: 0,
-          start: 0,
-          end: this.totalBytes || 100,
-          current: Math.round(((this.totalBytes || 100) * this.percent) / 100),
-          percent: this.percent,
-          active: this.status === 'downloading',
-          completed: this.percent >= 100
-        }
-      ]
+      maxConnections: this.maxConnections || 32,
+      segments
     });
   }
 
   toJSON() {
+    const numSegments = Math.max(1, this.maxConnections || 32);
+    const total = this.totalBytes || 100;
+    const chunkSize = Math.max(1, Math.floor(total / numSegments));
+    const segments = Array.from({ length: numSegments }, (_, i) => {
+      const segStart = i * chunkSize;
+      const segEnd = (i === numSegments - 1) ? total - 1 : (segStart + chunkSize - 1);
+      const isDone = this.percent >= 100 || this.status === 'completed';
+      return {
+        id: i,
+        start: segStart,
+        end: segEnd,
+        current: isDone ? segEnd + 1 : segStart,
+        active: false,
+        completed: isDone
+      };
+    });
+
     return {
       id: this.id,
       url: this.url,
@@ -255,8 +297,9 @@ export class YoutubeDownloader extends EventEmitter {
       avgSpeed: this.avgSpeed,
       speedSamples: this.speedSamples,
       eta: this.eta,
+      maxConnections: this.maxConnections || 32,
       resumable: true,
-      segments: this.segments,
+      segments,
       createdAt: this.createdAt
     };
   }

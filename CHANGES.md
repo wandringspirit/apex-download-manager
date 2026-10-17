@@ -23,6 +23,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
   - Cohesive monochrome Lucide icons (`Video`, `Archive`, `Package`, `FileText`, `File`) with `stroke-[1.75]`.
 - **Added Native Window Status Bar**: Pinned a native instrument footer bar displaying live bridge status (`127.0.0.1:48911`), active/queued/completed counts, total throughput in real-time tabular numbers, and socket capacity.
 - **Standardized Modals**: Updated `AddDownloadModal`, `SchedulerModal`, `SettingsModal`, `AboutModal`, and `ShareModal` to match the obsidian surface system.
+- **Architectural Overhaul of Inspector Tabs (Speed Chart vs. Segments)**:
+  - Fixed issue where both tabs displayed identical static controls (4 telemetry boxes, progress bar, parallel socket slider) while pushing the actual chart and segments off-screen below the fold.
+  - Separated views into dedicated hero panels:
+    - **Speed Chart Tab**: Full-height Transfer Rate Waveform Oscilloscope with live SVG curves, dashed gridlines, timeline labels, and interactive mouse-hover inspection crosshairs.
+    - **Segments Tab**: Concurrency control bar (slider + 8/16/32/64 presets), IDM-style master file memory map, and multi-socket worker cards grid.
+  - Added dynamic multi-socket segment synthesis in `YoutubeDownloader.js` and `SegmentVisualizer.tsx` ensuring multi-thread partition visualization across all downloads.
 
 ### 🚀 Acceleration Engine & Core Architecture
 - **64-Thread Dynamic Bisecting Range Engine**:
