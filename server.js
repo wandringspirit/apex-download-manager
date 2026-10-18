@@ -21,3 +21,13 @@ bridgeServer.start();
 console.log('[ADM] Acceleration Engine initialized.');
 console.log('[ADM] Local Bridge listening on http://127.0.0.1:48911');
 console.log('[ADM] Ready to intercept Chrome & Edge downloads and video streams.');
+
+// Global resilience handlers to ensure server never crashes from malformed inputs or connection drops
+process.on('uncaughtException', (err) => {
+  console.error('[ADM Core Error] Uncaught exception safely handled:', err.message);
+});
+
+process.on('unhandledRejection', (reason) => {
+  console.error('[ADM Core Error] Unhandled rejection safely handled:', reason);
+});
+

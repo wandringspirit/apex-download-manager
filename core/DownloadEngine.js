@@ -69,7 +69,25 @@ export class DownloadTask extends EventEmitter {
     this.emit('status', this.status);
 
     return new Promise((resolve, reject) => {
-      const parsedUrl = new URL(this.url);
+      let parsedUrl;
+      try {
+        parsedUrl = new URL(this.url);
+      } catch (e) {
+        this.status = 'error';
+        this.error = 'Invalid URL format';
+        this.emit('status', this.status);
+        this.emit('error', new Error(this.error));
+        return reject(new Error(this.error));
+      }
+
+      if (parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:') {
+        this.status = 'error';
+        this.error = `Unsupported protocol "${parsedUrl.protocol}"`;
+        this.emit('status', this.status);
+        this.emit('error', new Error(this.error));
+        return reject(new Error(this.error));
+      }
+
       const isHttps = parsedUrl.protocol === 'https:';
       const client = isHttps ? https : http;
 
@@ -262,8 +280,15 @@ export class DownloadTask extends EventEmitter {
   downloadSegment(segment) {
     if (this.status !== 'downloading' || segment.completed || segment.current > segment.end) return;
 
+    let parsedUrl;
+    try {
+      parsedUrl = new URL(this.url);
+    } catch (_) {
+      return;
+    }
+    if (parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:') return;
+
     segment.active = true;
-    const parsedUrl = new URL(this.url);
     const client = parsedUrl.protocol === 'https:' ? https : http;
 
     const headers = {
@@ -496,7 +521,17 @@ export class DownloadTask extends EventEmitter {
   }
 
   downloadSingleStream() {
-    const parsedUrl = new URL(this.url);
+    let parsedUrl;
+    try {
+      parsedUrl = new URL(this.url);
+      if (parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:') {
+        this.emit('error', new Error(`Invalid protocol "${parsedUrl.protocol}". Expected "http:" or "https:".`));
+        return;
+      }
+    } catch (e) {
+      this.emit('error', new Error(`Invalid URL "${this.url}": ${e.message}`));
+      return;
+    }
     const client = parsedUrl.protocol === 'https:' ? https : http;
 
     const headers = {

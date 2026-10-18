@@ -370,6 +370,65 @@
   if (isTerabox) {
     console.log('[ADM] TeraBox Direct Multi-Socket Interceptor activated.');
 
+    // 0. Auto-Catch: directly add to downloads as soon as TeraBox share URL is opened in Chrome
+    const isSharePage = window.location.pathname.includes('/s/') || 
+                        window.location.search.includes('surl=') || 
+                        window.location.pathname.includes('/sharing/');
+
+    if (isSharePage) {
+      const pageKey = 'adm_tb_auto_caught_' + (window.location.pathname + window.location.search);
+      if (!sessionStorage.getItem(pageKey)) {
+        sessionStorage.setItem(pageKey, '1');
+
+        // Create elegant floating status banner
+        const banner = document.createElement('div');
+        banner.className = 'adm-idm-grabber-panel';
+        banner.style.cssText = 'position:fixed;top:18px;right:18px;z-index:2147483647;background:linear-gradient(135deg,rgba(15,23,42,0.96),rgba(30,41,59,0.96));border:1px solid #00f0ff;box-shadow:0 10px 30px rgba(0,240,255,0.25);color:#fff;padding:12px 18px;border-radius:10px;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif;display:flex;align-items:center;gap:12px;user-select:none;transition:all 0.3s ease;';
+        banner.innerHTML = `
+          <div style="width:26px;height:26px;border-radius:50%;background:linear-gradient(135deg,#0284c7,#00f0ff);display:flex;align-items:center;justify-content:center;color:#000;font-weight:900;font-size:14px;box-shadow:0 0 10px rgba(0,240,255,0.5);">⚡</div>
+          <div style="display:flex;flex-direction:column;gap:2px;">
+            <div style="font-weight:700;font-size:13px;color:#f1f5f9;">Apex Download Manager: TeraBox Link Detected</div>
+            <div style="font-size:11.5px;color:#94a3b8;">Adding to 32-socket accelerated download...</div>
+          </div>
+          <div class="adm-tb-close-banner" style="margin-left:8px;cursor:pointer;color:#64748b;font-weight:700;font-size:14px;" title="Dismiss">&times;</div>
+        `;
+        
+        const closeX = banner.querySelector('.adm-tb-close-banner');
+        if (closeX) {
+          closeX.onclick = (e) => {
+            e.stopPropagation();
+            banner.remove();
+          };
+        }
+
+        (document.body || document.documentElement).appendChild(banner);
+
+        if (chrome && chrome.runtime && chrome.runtime.id) {
+          chrome.runtime.sendMessage({
+            type: 'GRAB_MEDIA',
+            url: window.location.href,
+            fileName: document.title.replace(/[\\/:*?"<>|]/g, '').trim() || 'TeraBox_File'
+          }, (res) => {
+            if (res && res.success) {
+              banner.style.borderColor = '#10b981';
+              banner.style.boxShadow = '0 10px 30px rgba(16,185,129,0.25)';
+              banner.innerHTML = `
+                <div style="width:26px;height:26px;border-radius:50%;background:linear-gradient(135deg,#059669,#10b981);display:flex;align-items:center;justify-content:center;color:#fff;font-weight:900;font-size:14px;box-shadow:0 0 10px rgba(16,185,129,0.5);">&#10003;</div>
+                <div style="display:flex;flex-direction:column;gap:2px;">
+                  <div style="font-weight:700;font-size:13px;color:#a7f3d0;">Direct Download Started in ADM!</div>
+                  <div style="font-size:11.5px;color:#94a3b8;">32 parallel sockets active. You can safely close this tab.</div>
+                </div>
+              `;
+              setTimeout(() => {
+                banner.style.opacity = '0';
+                setTimeout(() => banner.remove(), 400);
+              }, 4500);
+            }
+          });
+        }
+      }
+    }
+
     const fileMap = new Map();
 
     // 1. Intercept fetch/XHR to extract direct dlink from TeraBox API responses
