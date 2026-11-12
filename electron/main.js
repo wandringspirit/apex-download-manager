@@ -27,6 +27,45 @@ if (!gotTheLock) {
   });
 }
 
+function showMainWindow() {
+  if (!mainWindow) {
+    createWindow();
+    return;
+  }
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
+}
+
+function createTray() {
+  if (tray) return tray;
+  const iconPath = path.join(__dirname, '..', 'extension', 'icons', 'icon48.png');
+  const fallbackIcon = path.join(__dirname, '..', 'extension', 'icons', 'icon128.png');
+  const resolvedIcon = fs.existsSync(iconPath) ? iconPath : fallbackIcon;
+  if (!fs.existsSync(resolvedIcon)) return null;
+
+  const trayIcon = nativeImage.createFromPath(resolvedIcon);
+  tray = new Tray(trayIcon);
+  tray.setToolTip('Apex Download Manager (Online on port 48911)');
+
+  const contextMenu = Menu.buildFromTemplate([
+    { label: 'Show Apex Download Manager', click: () => showMainWindow() },
+    { type: 'separator' },
+    {
+      label: 'Quit ADM (Stops Auto-Catch)',
+      click: () => {
+        app.isQuitting = true;
+        app.quit();
+      }
+    }
+  ]);
+
+  tray.setContextMenu(contextMenu);
+  tray.on('click', () => showMainWindow());
+  tray.on('double-click', () => showMainWindow());
+  return tray;
+}
+
 function createWindow() {
   const iconPath = path.join(__dirname, '..', 'extension', 'icons', 'icon128.png');
   const appIcon = fs.existsSync(iconPath) ? nativeImage.createFromPath(iconPath) : null;
@@ -69,9 +108,16 @@ function createWindow() {
     }
   });
 
+  // Hide to Windows system tray on window close so port 48911 stays online for browser auto-catch
+  mainWindow.on('close', (event) => {
+    if (!app.isQuitting && tray) {
+      event.preventDefault();
+      mainWindow.hide();
+    }
+  });
+
   mainWindow.on('closed', () => {
     mainWindow = null;
-    app.quit();
   });
 }
 
@@ -90,10 +136,11 @@ app.whenReady().then(async () => {
     bridgeServer.start();
   }
 
+  createTray();
   createWindow();
 
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    showMainWindow();
   });
 });
 
@@ -102,5 +149,7 @@ app.on('before-quit', () => {
 });
 
 app.on('window-all-closed', () => {
-  app.quit();
+  if (app.isQuitting || !tray) {
+    app.quit();
+  }
 });

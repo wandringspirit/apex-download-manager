@@ -13,6 +13,7 @@ out/
 
 # Persistent Task State & Incomplete Downloads
 .adm_tasks.json
+cookies.txt
 *.adm_download
 *.adm_meta
 

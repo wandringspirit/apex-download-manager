@@ -93,6 +93,7 @@ export class BridgeServer {
               fileName: data.fileName || '',
               savePath: data.savePath,
               category: data.category,
+              headers: data.headers && typeof data.headers === 'object' ? data.headers : undefined,
               autoStart: data.autoStart !== false
             });
 

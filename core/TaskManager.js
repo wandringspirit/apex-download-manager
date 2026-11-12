@@ -73,7 +73,13 @@ export class TaskManager extends EventEmitter {
 
   saveState() {
     try {
-      const list = Array.from(this.downloads.values()).map(t => t.toJSON());
+      const list = Array.from(this.downloads.values()).map(t => {
+        const json = t.toJSON();
+        if (t.headers && Object.keys(t.headers).length > 0) {
+          json.headers = t.headers;
+        }
+        return json;
+      });
       fs.writeFileSync(this.storagePath, JSON.stringify(list, null, 2), 'utf8');
     } catch (e) {
       console.error('Failed to save downloads:', e);
@@ -104,7 +110,7 @@ export class TaskManager extends EventEmitter {
     });
   }
 
-  async addTask({ url, fileName, savePath, category, maxConnections, autoStart = true }) {
+  async addTask({ url, fileName, savePath, category, maxConnections, headers, autoStart = true }) {
     // Check if it's a streaming video portal supported by our extractor (YouTube, TikTok, Twitter/X, Instagram, Reddit, Vimeo, Twitch, etc.)
     const isStreamingPortal = [
       'youtube.com', 'youtu.be', 'tiktok.com', 'instagram.com', 'facebook.com', 
@@ -150,7 +156,8 @@ export class TaskManager extends EventEmitter {
       fileName,
       savePath,
       category,
-      maxConnections: maxConnections || 32
+      maxConnections: maxConnections || 32,
+      headers: headers || {}
     });
 
     this.attachTaskEvents(task);

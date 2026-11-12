@@ -192,4 +192,75 @@ describe('DownloadEngine - Bulletproof Concurrency & Integrity Test Suite', () =
     task.handleRateLimitStepDown(429, task.segments[0]);
     assert.strictEqual(task.maxConnections, 16);
   });
+
+  it('TC-20: Authenticated /download URL with Cookies, 302 Redirect, and RFC 5987 Filename', async () => {
+    const http = await import('http');
+    const payloadBuf = Buffer.alloc(128 * 1024, 0x5a);
+    let sawCookieOnRedirect = false;
+    let sawCookieOnCdn = false;
+
+    const server = http.createServer((req, res) => {
+      if (req.url.startsWith('/download')) {
+        if (req.headers.cookie === 'SID=secret_cookie') {
+          sawCookieOnRedirect = true;
+        }
+        res.writeHead(302, { Location: '/cdn-video-stream' });
+        res.end();
+        return;
+      }
+
+      if (req.url.startsWith('/cdn-video-stream')) {
+        if (req.headers.cookie === 'SID=secret_cookie') {
+          sawCookieOnCdn = true;
+        }
+        const rangeHeader = req.headers.range;
+        if (rangeHeader) {
+          const match = rangeHeader.match(/bytes=(\d+)-(\d*)/);
+          const start = parseInt(match[1], 10);
+          const end = match[2] ? Math.min(payloadBuf.length - 1, parseInt(match[2], 10)) : payloadBuf.length - 1;
+          res.writeHead(206, {
+            'Content-Type': 'video/mp4',
+            'Content-Disposition': "attachment; filename*=UTF-8''20261112_171946.mp4",
+            'Content-Range': `bytes ${start}-${end}/${payloadBuf.length}`,
+            'Content-Length': (end - start + 1).toString()
+          });
+          res.end(payloadBuf.subarray(start, end + 1));
+          return;
+        }
+        res.writeHead(200, { 'Content-Length': payloadBuf.length.toString() });
+        res.end(payloadBuf);
+      }
+    });
+
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+    const port = server.address().port;
+
+    try {
+      const task = new DownloadTask({
+        url: `http://127.0.0.1:${port}/download?id=abc&export=download`,
+        savePath: TEST_DIR,
+        headers: { Cookie: 'SID=secret_cookie' }
+      });
+
+      const meta = await task.probe();
+      assert.strictEqual(meta.fileName, '20261112_171946.mp4');
+      assert.strictEqual(meta.totalBytes, payloadBuf.length);
+      assert.strictEqual(meta.resumable, true);
+      assert.strictEqual(meta.category, 'Video');
+      assert.strictEqual(sawCookieOnRedirect, true);
+      assert.strictEqual(sawCookieOnCdn, true);
+
+      await new Promise((resolve, reject) => {
+        task.on('complete', resolve);
+        task.on('error', reject);
+        task.start();
+      });
+
+      const finalPath = path.join(TEST_DIR, '20261112_171946.mp4');
+      assert.strictEqual(fs.existsSync(finalPath), true);
+      assert.strictEqual(fs.statSync(finalPath).size, payloadBuf.length);
+    } finally {
+      server.close();
+    }
+  });
 });

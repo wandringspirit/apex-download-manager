@@ -12,7 +12,7 @@ export class DownloadTask extends EventEmitter {
     this.id = options.id || Math.random().toString(36).substring(2, 10);
     this.url = options.url;
     this.savePath = options.savePath || path.join(os.homedir(), 'Downloads');
-    this.fileName = options.fileName || '';
+    this.fileName = options.fileName ? this.sanitizeFileName(options.fileName) : '';
     this.maxConnections = options.maxConnections || 32;
     this.category = options.category || 'General';
     this.status = 'idle'; // 'idle' | 'probing' | 'downloading' | 'paused' | 'completed' | 'error'
@@ -38,7 +38,33 @@ export class DownloadTask extends EventEmitter {
     this.throttledReason = options.throttledReason || null;
     this.last429Time = 0;
     this.headers = options.headers || {};
+    this.originHost = '';
+    try { this.originHost = new URL(this.url).hostname; } catch (_) {}
     this.createdAt = options.createdAt || new Date().toISOString();
+  }
+
+  sanitizeFileName(name) {
+    if (!name) return '';
+    const base = path.basename(String(name).trim());
+    return base.replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').trim();
+  }
+
+  buildRequestHeaders(targetHost, extraHeaders = {}) {
+    const out = {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      'Accept': '*/*'
+    };
+    const orig = (this.originHost || '').toLowerCase();
+    const curr = (targetHost || '').toLowerCase();
+    const sameDomainGroup = !orig || !curr || orig === curr ||
+      orig.split('.').slice(-2).join('.') === curr.split('.').slice(-2).join('.') ||
+      ((orig.includes('google') || orig.includes('googleusercontent')) && (curr.includes('google') || curr.includes('googleusercontent')));
+
+    for (const [k, v] of Object.entries(this.headers || {})) {
+      if (k.toLowerCase() === 'cookie' && !sameDomainGroup) continue;
+      out[k] = v;
+    }
+    return { ...out, ...extraHeaders };
   }
 
   getFilePath() {
@@ -64,11 +90,19 @@ export class DownloadTask extends EventEmitter {
     }
   }
 
-  async probe() {
+  async probe(redirectCount = 0) {
     this.status = 'probing';
     this.emit('status', this.status);
 
     return new Promise((resolve, reject) => {
+      if (redirectCount > 5) {
+        this.status = 'error';
+        this.error = 'Too many redirects';
+        this.emit('status', this.status);
+        this.emit('error', new Error(this.error));
+        return reject(new Error(this.error));
+      }
+
       let parsedUrl;
       try {
         parsedUrl = new URL(this.url);
@@ -90,34 +124,38 @@ export class DownloadTask extends EventEmitter {
 
       const isHttps = parsedUrl.protocol === 'https:';
       const client = isHttps ? https : http;
+      const headers = this.buildRequestHeaders(parsedUrl.hostname, { 'Range': 'bytes=0-0' });
 
-      const headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept': '*/*',
-        ...this.headers,
-        'Range': 'bytes=0-0'
-      };
-
-      const req = client.request(this.url, { method: 'GET', headers }, (res) => {
+      const req = client.request(this.url, { method: 'GET', headers, timeout: 8000 }, (res) => {
         // Handle redirect
         if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
           this.url = new URL(res.headers.location, this.url).href;
           res.destroy();
-          return this.probe().then(resolve).catch(reject);
+          return this.probe(redirectCount + 1).then(resolve).catch(reject);
         }
 
-        // Extract filename if not set
+        // Extract filename if not set (supports RFC 5987 filename*=UTF-8''... and filename=...)
         if (!this.fileName) {
           const disposition = res.headers['content-disposition'];
-          if (disposition && disposition.includes('filename=')) {
-            const match = disposition.match(/filename=["']?([^"';]+)["']?/);
-            if (match && match[1]) {
-              this.fileName = decodeURIComponent(match[1].trim());
+          if (disposition) {
+            const utfMatch = disposition.match(/filename\*\s*=\s*(?:UTF-8|utf-8)''([^;\r\n]+)/i);
+            const stdMatch = disposition.match(/filename\s*=\s*["']?([^"';\r\n]+)["']?/i);
+            const rawName = (utfMatch && utfMatch[1]) || (stdMatch && stdMatch[1]);
+            if (rawName) {
+              try {
+                this.fileName = this.sanitizeFileName(decodeURIComponent(rawName.trim()));
+              } catch (_) {
+                this.fileName = this.sanitizeFileName(rawName.trim());
+              }
             }
           }
           if (!this.fileName) {
             const cleanPath = parsedUrl.pathname.split('/').filter(Boolean).pop() || 'download.bin';
-            this.fileName = decodeURIComponent(cleanPath.split('?')[0]);
+            try {
+              this.fileName = this.sanitizeFileName(decodeURIComponent(cleanPath.split('?')[0])) || 'download.bin';
+            } catch (_) {
+              this.fileName = this.sanitizeFileName(cleanPath.split('?')[0]) || 'download.bin';
+            }
           }
         }
 
@@ -150,6 +188,10 @@ export class DownloadTask extends EventEmitter {
           resumable: this.resumable,
           category: this.category
         });
+      });
+
+      req.on('timeout', () => {
+        req.destroy(new Error('Probe timed out'));
       });
 
       req.on('error', (err) => {
@@ -277,12 +319,13 @@ export class DownloadTask extends EventEmitter {
     }
   }
 
-  downloadSegment(segment) {
+  downloadSegment(segment, redirectCount = 0, targetUrl = null) {
     if (this.status !== 'downloading' || segment.completed || segment.current > segment.end) return;
 
+    const requestUrl = targetUrl || this.url;
     let parsedUrl;
     try {
-      parsedUrl = new URL(this.url);
+      parsedUrl = new URL(requestUrl);
     } catch (_) {
       return;
     }
@@ -290,15 +333,19 @@ export class DownloadTask extends EventEmitter {
 
     segment.active = true;
     const client = parsedUrl.protocol === 'https:' ? https : http;
-
-    const headers = {
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-      'Accept': '*/*',
-      ...this.headers,
+    const headers = this.buildRequestHeaders(parsedUrl.hostname, {
       'Range': `bytes=${segment.current}-${segment.end}`
-    };
+    });
 
-    const req = client.request(this.url, { method: 'GET', headers }, (res) => {
+    const req = client.request(requestUrl, { method: 'GET', headers }, (res) => {
+      // Follow 3xx redirects transparently on segment requests
+      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location && redirectCount < 5) {
+        const nextUrl = new URL(res.headers.location, requestUrl).href;
+        res.destroy();
+        this.url = nextUrl;
+        return this.downloadSegment(segment, redirectCount + 1, nextUrl);
+      }
+
       // Adaptive 429 / 503 Auto-Throttle Step-Down
       if (res.statusCode === 429 || res.statusCode === 503) {
         segment.active = false;
@@ -520,27 +567,31 @@ export class DownloadTask extends EventEmitter {
     this.emitProgress();
   }
 
-  downloadSingleStream() {
+  downloadSingleStream(redirectCount = 0, targetUrl = null) {
+    const requestUrl = targetUrl || this.url;
     let parsedUrl;
     try {
-      parsedUrl = new URL(this.url);
+      parsedUrl = new URL(requestUrl);
       if (parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:') {
         this.emit('error', new Error(`Invalid protocol "${parsedUrl.protocol}". Expected "http:" or "https:".`));
         return;
       }
     } catch (e) {
-      this.emit('error', new Error(`Invalid URL "${this.url}": ${e.message}`));
+      this.emit('error', new Error(`Invalid URL "${requestUrl}": ${e.message}`));
       return;
     }
     const client = parsedUrl.protocol === 'https:' ? https : http;
+    const headers = this.buildRequestHeaders(parsedUrl.hostname);
 
-    const headers = {
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-      'Accept': '*/*',
-      ...this.headers
-    };
+    const req = client.request(requestUrl, { method: 'GET', headers }, (res) => {
+      // Follow 3xx redirects transparently instead of writing HTML redirect body to disk
+      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location && redirectCount < 5) {
+        const nextUrl = new URL(res.headers.location, requestUrl).href;
+        res.destroy();
+        this.url = nextUrl;
+        return this.downloadSingleStream(redirectCount + 1, nextUrl);
+      }
 
-    const req = client.request(this.url, { method: 'GET', headers }, (res) => {
       res.on('data', (chunk) => {
         if (this.status !== 'downloading' || !this.fileDescriptor) {
           req.destroy();
