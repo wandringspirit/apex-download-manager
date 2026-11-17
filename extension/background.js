@@ -352,19 +352,121 @@ function recordDetectedStream(tabId, url, typeInfo, headers = {}) {
   } catch (_) {}
 }
 
+// =========================================================================
+// Real-Time Subtitle Sniffer (.vtt / .srt / .ass -> Auto-Converted to .srt)
+// =========================================================================
+const detectedSubtitlesByTab = new Map(); // tabId -> Array<SubtitleEntry>
+
+function inferSubtitleLanguage(url) {
+  const lower = String(url || '').toLowerCase();
+  const langMap = [
+    [/\b(english|eng|en[-_.]us|en[-_.]gb)\b|\/en[-_.]/i, 'English'],
+    [/\b(japanese|jpn|ja)\b|\/ja[-_.]/i, 'Japanese'],
+    [/\b(spanish|spa|esp|es[-_.])/i, 'Spanish'],
+    [/\b(french|fre|fra|fr[-_.])/i, 'French'],
+    [/\b(german|ger|deu|de[-_.])/i, 'German'],
+    [/\b(arabic|ara|ar[-_.])/i, 'Arabic'],
+    [/\b(hindi|hin|hi[-_.])/i, 'Hindi'],
+    [/\b(portuguese|por|pt[-_.])/i, 'Portuguese'],
+    [/\b(italian|ita|it[-_.])/i, 'Italian'],
+    [/\b(russian|rus|ru[-_.])/i, 'Russian'],
+    [/\b(korean|kor|ko[-_.])/i, 'Korean'],
+    [/\b(chinese|chi|zho|zh[-_.])/i, 'Chinese'],
+    [/\b(indonesian|ind|id[-_.])/i, 'Indonesian']
+  ];
+  for (const [regex, name] of langMap) {
+    if (regex.test(lower)) return name;
+  }
+  return 'Subtitles';
+}
+
+function detectSubtitleTrack(url, contentType = '') {
+  if (!url || typeof url !== 'string') return null;
+  const cleanUrl = url.split('#')[0];
+  const lower = cleanUrl.toLowerCase();
+  const cType = (contentType || '').toLowerCase();
+
+  // Exclude player seekbar preview thumbnails / sprite sheets (.vtt)
+  if (/(thumb|thumbnail|sprite|preview|trickplay|storyboard|chapter|\.bif)/i.test(lower)) {
+    return null;
+  }
+
+  const extMatch = cleanUrl.match(/\.(vtt|srt|ass|ssa)(\?|$)/i);
+  const isSubMime =
+    cType.includes('text/vtt') ||
+    cType.includes('application/x-subrip') ||
+    cType.includes('text/srt');
+
+  if (!extMatch && !isSubMime) return null;
+
+  const format = extMatch ? extMatch[1].toUpperCase() : (cType.includes('vtt') ? 'VTT' : 'SRT');
+  const language = inferSubtitleLanguage(cleanUrl);
+  return { format, language };
+}
+
+function recordDetectedSubtitle(tabId, url, subInfo, headers = {}) {
+  if (!tabId || tabId < 0 || !url || isAdOrTrackerUrl(url)) return;
+
+  if (!detectedSubtitlesByTab.has(tabId)) {
+    detectedSubtitlesByTab.set(tabId, []);
+  }
+  const subList = detectedSubtitlesByTab.get(tabId);
+
+  const existing = subList.find(s => s.url === url);
+  if (existing) {
+    if (headers && Object.keys(headers).length > 0) {
+      existing.headers = { ...existing.headers, ...headers };
+    }
+    return;
+  }
+
+  let candidateTitle = '';
+  try {
+    const u = new URL(url);
+    candidateTitle = decodeURIComponent((u.pathname.split('/').filter(Boolean).pop() || '').split('?')[0]);
+  } catch (_) {}
+
+  const subEntry = {
+    id: Math.random().toString(36).substring(2, 9),
+    tabId,
+    url,
+    title: candidateTitle || `${subInfo.language}.srt`,
+    language: subInfo.language,
+    format: subInfo.format,
+    headers: headers || {},
+    timestamp: Date.now()
+  };
+
+  if (subList.length >= 20) subList.shift();
+  subList.push(subEntry);
+
+  try {
+    chrome.tabs.sendMessage(tabId, {
+      type: 'SUBTITLE_DETECTED',
+      subtitle: subEntry
+    }, () => {
+      void chrome.runtime.lastError;
+    });
+  } catch (_) {}
+}
+
 if (chrome.webRequest && chrome.webRequest.onBeforeRequest) {
   try {
     chrome.webRequest.onBeforeRequest.addListener(
       (details) => {
         if (!details || details.tabId < 0) return;
+        const headers = {};
+        if (details.initiator) {
+          headers['Origin'] = details.initiator;
+          headers['Referer'] = details.initiator + '/';
+        }
         const typeInfo = detectStreamType(details.url);
         if (typeInfo) {
-          const headers = {};
-          if (details.initiator) {
-            headers['Origin'] = details.initiator;
-            headers['Referer'] = details.initiator + '/';
-          }
           recordDetectedStream(details.tabId, details.url, typeInfo, headers);
+        }
+        const subInfo = detectSubtitleTrack(details.url);
+        if (subInfo) {
+          recordDetectedSubtitle(details.tabId, details.url, subInfo, headers);
         }
       },
       { urls: ['<all_urls>'] }
@@ -379,9 +481,9 @@ if (chrome.webRequest && chrome.webRequest.onBeforeSendHeaders) {
     chrome.webRequest.onBeforeSendHeaders.addListener(
       (details) => {
         if (!details || details.tabId < 0) return;
-        const streamList = detectedStreamsByTab.get(details.tabId);
-        if (!streamList || streamList.length === 0) return;
-        const entry = streamList.find(s => s.url === details.url);
+        const streamList = detectedStreamsByTab.get(details.tabId) || [];
+        const subList = detectedSubtitlesByTab.get(details.tabId) || [];
+        const entry = streamList.find(s => s.url === details.url) || subList.find(s => s.url === details.url);
         if (entry && details.requestHeaders) {
           entry.headers = entry.headers || {};
           for (const h of details.requestHeaders) {
@@ -414,6 +516,10 @@ if (chrome.webRequest && chrome.webRequest.onHeadersReceived) {
         if (typeInfo) {
           recordDetectedStream(details.tabId, details.url, typeInfo);
         }
+        const subInfo = detectSubtitleTrack(details.url, cType);
+        if (subInfo) {
+          recordDetectedSubtitle(details.tabId, details.url, subInfo);
+        }
       },
       { urls: ['<all_urls>'] },
       ['responseHeaders']
@@ -423,14 +529,16 @@ if (chrome.webRequest && chrome.webRequest.onHeadersReceived) {
   }
 }
 
-// Clean up streams when tabs close or navigate
+// Clean up streams & subtitles when tabs close or navigate
 if (chrome.tabs) {
   chrome.tabs.onRemoved.addListener((tabId) => {
     detectedStreamsByTab.delete(tabId);
+    detectedSubtitlesByTab.delete(tabId);
   });
   chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
     if (changeInfo.status === 'loading' && changeInfo.url) {
       detectedStreamsByTab.delete(tabId);
+      detectedSubtitlesByTab.delete(tabId);
       try {
         if (chrome.action) chrome.action.setBadgeText({ tabId, text: '' });
       } catch (_) {}
@@ -447,11 +555,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message.type === 'GET_DETECTED_STREAMS') {
     const tabId = message.tabId || (sender && sender.tab ? sender.tab.id : null);
-    if (tabId && detectedStreamsByTab.has(tabId)) {
-      sendResponse({ streams: detectedStreamsByTab.get(tabId) });
-    } else {
-      sendResponse({ streams: [] });
-    }
+    sendResponse({
+      streams: (tabId && detectedStreamsByTab.get(tabId)) || [],
+      subtitles: (tabId && detectedSubtitlesByTab.get(tabId)) || []
+    });
     return true;
   }
 
@@ -465,6 +572,32 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         url: message.url,
         fileName: message.fileName || '',
         referrer: message.referrer || '',
+        headers
+      });
+      sendResponse({ success: !!result, result });
+    })();
+    return true;
+  }
+
+  if (message.type === 'DOWNLOAD_SUBTITLE') {
+    (async () => {
+      let headers = message.headers || {};
+      const ref = message.referrer || (sender && sender.tab ? sender.tab.url : '');
+      if (message.url && (!headers || Object.keys(headers).length === 0)) {
+        headers = await buildRequestHeaders(message.url, ref);
+      }
+      let resolvedFileName = message.fileName || '';
+      if (sender && sender.frameId > 0 && sender.tab && sender.tab.title) {
+        const cleanTabTitle = sender.tab.title.replace(/[\\/:*?"<>|]/g, '').trim();
+        if (cleanTabTitle) {
+          resolvedFileName = `${cleanTabTitle}.srt`;
+        }
+      }
+      const result = await sendToADM({
+        url: message.url,
+        fileName: resolvedFileName,
+        referrer: ref,
+        convertToSrt: true,
         headers
       });
       sendResponse({ success: !!result, result });
@@ -486,12 +619,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (sender && sender.frameId > 0 && sender.tab && sender.tab.title) {
       const cleanTabTitle = sender.tab.title.replace(/[\\/:*?"<>|]/g, '').trim();
       if (cleanTabTitle) {
-        resolvedFileName = `${cleanTabTitle}.mp4`;
+        resolvedFileName = message.quality === 'subtitle' ? `${cleanTabTitle}.srt` : `${cleanTabTitle}.mp4`;
       }
     }
     sendToADM({
       url: message.url,
       fileName: resolvedFileName,
+      quality: message.quality,
+      convertToSrt: message.quality === 'subtitle' && !message.url.includes('youtube.com') && !message.url.includes('youtu.be'),
       referrer: sender.tab ? sender.tab.url : '',
       headers: message.headers && typeof message.headers === 'object' ? message.headers : undefined
     }).then(result => {

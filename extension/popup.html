@@ -212,6 +212,11 @@
       color: #34d399;
       border: 1px solid rgba(16, 185, 129, 0.4);
     }
+    .badge-srt {
+      background: rgba(245, 158, 11, 0.2);
+      color: #fbbf24;
+      border: 1px solid rgba(245, 158, 11, 0.45);
+    }
     .btn-download-stream {
       padding: 5px 8px;
       background: linear-gradient(135deg, #0284c7, #0369a1);
@@ -276,6 +281,20 @@
       <span id="detectedCountBadge" class="detected-count-badge">0</span>
     </div>
     <div id="detectedList" class="detected-list"></div>
+  </div>
+
+  <div id="detectedSubtitlesSection" class="detected-section" style="display: none;">
+    <div class="detected-header">
+      <div class="detected-title" style="color: #fbbf24;">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+          <rect x="2" y="4" width="20" height="16" rx="2"></rect>
+          <path d="M7 15h4m2 0h4M7 11h2m4 0h4"></path>
+        </svg>
+        Captured Subtitles (.SRT)
+      </div>
+      <span id="detectedSubCountBadge" class="detected-count-badge" style="background: #d97706;">0</span>
+    </div>
+    <div id="detectedSubList" class="detected-list"></div>
   </div>
 
   <div class="quick-add">

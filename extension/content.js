@@ -2,6 +2,40 @@
 (() => {
   let latestStreamUrl = null;
   let latestStreamHeaders = {};
+  const detectedSubtitles = [];
+
+  function findDomSubtitleTracks(mediaElement) {
+    const tracks = [];
+    const scope = mediaElement ? [mediaElement, document] : [document];
+    const seen = new Set();
+    for (const root of scope) {
+      const els = root.querySelectorAll ? root.querySelectorAll('track[src]') : [];
+      els.forEach((tr) => {
+        const kind = (tr.getAttribute('kind') || '').toLowerCase();
+        if (kind && kind !== 'subtitles' && kind !== 'captions') return;
+        const rawSrc = tr.src || tr.getAttribute('src') || '';
+        if (!rawSrc || seen.has(rawSrc)) return;
+        if (/(thumb|thumbnail|sprite|preview|trickplay|storyboard)/i.test(rawSrc)) return;
+        seen.add(rawSrc);
+        const isShowing = tr.track && tr.track.mode === 'showing';
+        const lang = tr.label || tr.srclang || 'English';
+        tracks.push({ url: rawSrc, language: lang, isShowing, headers: {} });
+      });
+    }
+    return tracks;
+  }
+
+  function pickBestSubtitle(mediaElement, bgSubs = []) {
+    const domSubs = findDomSubtitleTracks(mediaElement);
+    const all = [...domSubs, ...detectedSubtitles, ...bgSubs];
+    if (all.length === 0) return null;
+    // Priority: currently active track > English track > latest captured track
+    const active = all.find(s => s.isShowing);
+    if (active) return active;
+    const english = all.find(s => /eng|^en\b/i.test(String(s.language || s.url || '')));
+    if (english) return english;
+    return all[all.length - 1];
+  }
 
   if (chrome && chrome.runtime && chrome.runtime.onMessage) {
     chrome.runtime.onMessage.addListener((msg) => {
@@ -16,6 +50,15 @@
             v._adm_stream_url = msg.stream.url;
           }
           ensureButtonForMedia(v);
+        });
+      }
+      if (msg && msg.type === 'SUBTITLE_DETECTED' && msg.subtitle) {
+        if (!detectedSubtitles.some(s => s.url === msg.subtitle.url)) {
+          detectedSubtitles.push(msg.subtitle);
+        }
+        document.querySelectorAll('.adm-sub-label').forEach((el) => {
+          const lang = msg.subtitle.language && msg.subtitle.language !== 'Subtitles' ? ` (${msg.subtitle.language})` : '';
+          el.textContent = `Subtitles${lang}`;
         });
       }
     });
@@ -119,6 +162,12 @@
           </div>
           <span class="adm-idm-badge adm-badge-audio">MP3 Audio</span>
         </div>
+        <div class="adm-idm-dropdown-item" data-quality="subtitle">
+          <div class="adm-idm-dropdown-left">
+            <span class="adm-sub-label">Subtitles</span>
+          </div>
+          <span class="adm-idm-badge adm-badge-sub">SRT File</span>
+        </div>
       </div>
     `;
 
@@ -165,25 +214,75 @@
         quality
       };
 
-      const handleSuccess = () => {
+      const handleSuccess = (msg = 'Sent to ADM!') => {
         panel.classList.remove('adm-idm-error');
         panel.classList.add('adm-idm-success');
-        if (label) label.textContent = 'Sent to ADM!';
+        if (label) label.textContent = msg;
         setTimeout(() => {
           panel.classList.remove('adm-idm-success');
           if (label) label.textContent = 'Download this video';
         }, 3000);
       };
 
-      const handleError = () => {
+      const handleError = (msg = 'ADM Offline') => {
         panel.classList.remove('adm-idm-success');
         panel.classList.add('adm-idm-error');
-        if (label) label.textContent = 'ADM Offline';
+        if (label) label.textContent = msg;
         setTimeout(() => {
           panel.classList.remove('adm-idm-error');
           if (label) label.textContent = 'Download this video';
         }, 3000);
       };
+
+      // Handle SRT Subtitle Download option
+      if (quality === 'subtitle') {
+        const isYouTube = window.location.hostname.includes('youtube.com') || window.location.hostname.includes('youtu.be');
+        if (isYouTube && chrome && chrome.runtime && chrome.runtime.id) {
+          chrome.runtime.sendMessage({
+            type: 'GRAB_MEDIA',
+            url: window.location.href,
+            fileName: `${pageTitle}.srt`,
+            quality: 'subtitle'
+          }, (res) => {
+            if (!chrome.runtime.lastError && res && res.success) handleSuccess('SRT Sent to ADM!');
+            else handleError('ADM Offline');
+          });
+          return;
+        }
+
+        const sendSubTrack = (sub) => {
+          if (!sub || !sub.url) {
+            handleError('Turn on CC first');
+            return;
+          }
+          if (chrome && chrome.runtime && chrome.runtime.id) {
+            chrome.runtime.sendMessage({
+              type: 'DOWNLOAD_SUBTITLE',
+              url: sub.url,
+              fileName: `${pageTitle}.srt`,
+              headers: sub.headers || latestStreamHeaders || {}
+            }, (res) => {
+              if (!chrome.runtime.lastError && res && res.success) handleSuccess('SRT Sent to ADM!');
+              else handleError('ADM Offline');
+            });
+          } else {
+            fallbackDirectPost(sub.url, `${pageTitle}.srt`, () => handleSuccess('SRT Sent to ADM!'), handleError, true);
+          }
+        };
+
+        const localSub = pickBestSubtitle(mediaElement);
+        if (localSub) {
+          sendSubTrack(localSub);
+        } else if (chrome && chrome.runtime && chrome.runtime.id) {
+          chrome.runtime.sendMessage({ type: 'GET_DETECTED_STREAMS' }, (res) => {
+            const bgSubs = (!chrome.runtime.lastError && res && Array.isArray(res.subtitles)) ? res.subtitles : [];
+            sendSubTrack(pickBestSubtitle(mediaElement, bgSubs));
+          });
+        } else {
+          handleError('Turn on CC first');
+        }
+        return;
+      }
 
       // Primary: Send via chrome.runtime
       let sentViaRuntime = false;
@@ -207,11 +306,11 @@
       }
     };
 
-    function fallbackDirectPost(url, fileName, onSuccess, onError) {
+    function fallbackDirectPost(url, fileName, onSuccess, onError, convertToSrt = false) {
       fetch('http://127.0.0.1:48911/api/download', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url, fileName, referrer: window.location.href })
+        body: JSON.stringify({ url, fileName, referrer: window.location.href, convertToSrt })
       })
       .then(res => res.json())
       .then(data => {

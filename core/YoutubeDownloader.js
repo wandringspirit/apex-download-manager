@@ -16,7 +16,8 @@ export class YoutubeDownloader extends EventEmitter {
     this.url = options.url;
     this.savePath = options.savePath || path.join(os.homedir(), 'Downloads');
     this.fileName = options.fileName || 'YouTube_Video.mp4';
-    this.category = 'Video';
+    this.quality = options.quality || 'best';
+    this.category = this.quality === 'subtitle' ? 'Documents' : 'Video';
     this.status = 'idle'; // 'idle' | 'probing' | 'downloading' | 'completed' | 'error' | 'paused'
     this.totalBytes = 0;
     this.downloadedBytes = 0;
@@ -95,10 +96,23 @@ export class YoutubeDownloader extends EventEmitter {
       '--buffer-size', '16M',
       '--newline',
       '--no-playlist',
-      '-N', String(Math.min(64, Math.max(1, this.maxConnections || 32))),
-      '-f', 'bestvideo+bestaudio/best',
-      '--merge-output-format', 'mp4'
+      '-N', String(Math.min(64, Math.max(1, this.maxConnections || 32)))
     ];
+
+    if (this.quality === 'subtitle') {
+      args.push(
+        '--skip-download',
+        '--write-subs',
+        '--write-auto-subs',
+        '--sub-langs', 'en.*,en',
+        '--sub-format', 'srt',
+        '--convert-subs', 'srt'
+      );
+    } else if (this.quality === 'audio') {
+      args.push('-f', 'bestaudio/best', '-x', '--audio-format', 'mp3');
+    } else {
+      args.push('-f', 'bestvideo+bestaudio/best', '--merge-output-format', 'mp4');
+    }
 
     // Optional user cookies file for YouTube authentication
     const cookiePath = path.join(process.cwd(), 'cookies.txt');

@@ -60,10 +60,13 @@ sendBtn.addEventListener('click', async () => {
   }
 });
 
-// Query and display detected video streams for the active tab
+// Query and display detected video streams & subtitles for the active tab
 const detectedSection = document.getElementById('detectedStreamsSection');
 const detectedList = document.getElementById('detectedList');
 const detectedCountBadge = document.getElementById('detectedCountBadge');
+const detectedSubSection = document.getElementById('detectedSubtitlesSection');
+const detectedSubList = document.getElementById('detectedSubList');
+const detectedSubCountBadge = document.getElementById('detectedSubCountBadge');
 
 function loadDetectedStreams() {
   if (!chrome.tabs || !chrome.tabs.query) return;
@@ -73,76 +76,146 @@ function loadDetectedStreams() {
     const tab = tabs[0];
 
     chrome.runtime.sendMessage({ type: 'GET_DETECTED_STREAMS', tabId: tab.id }, (response) => {
-      if (chrome.runtime.lastError || !response || !response.streams || response.streams.length === 0) {
+      if (chrome.runtime.lastError || !response) {
         if (detectedSection) detectedSection.style.display = 'none';
+        if (detectedSubSection) detectedSubSection.style.display = 'none';
         return;
       }
 
-      const streams = response.streams;
-      if (detectedSection) detectedSection.style.display = 'block';
-      if (detectedCountBadge) detectedCountBadge.textContent = String(streams.length);
-      if (detectedList) detectedList.innerHTML = '';
+      const streams = Array.isArray(response.streams) ? response.streams : [];
+      const subtitles = Array.isArray(response.subtitles) ? response.subtitles : [];
 
-      streams.forEach((stream) => {
-        const card = document.createElement('div');
-        card.className = 'detected-card';
+      if (streams.length === 0) {
+        if (detectedSection) detectedSection.style.display = 'none';
+      } else {
+        if (detectedSection) detectedSection.style.display = 'block';
+        if (detectedCountBadge) detectedCountBadge.textContent = String(streams.length);
+        if (detectedList) detectedList.innerHTML = '';
 
-        let displayTitle = tab.title ? tab.title.replace(/[\\/:*?"<>|]/g, '').trim() : stream.title;
-        if (!displayTitle) displayTitle = 'Video Stream';
+        streams.forEach((stream) => {
+          const card = document.createElement('div');
+          card.className = 'detected-card';
 
-        const isHls = stream.type === 'HLS';
-        const badgeClass = isHls ? 'badge-hls' : 'badge-quality';
+          let displayTitle = tab.title ? tab.title.replace(/[\\/:*?"<>|]/g, '').trim() : stream.title;
+          if (!displayTitle) displayTitle = 'Video Stream';
 
-        card.innerHTML = `
-          <div class="detected-card-top">
-            <div class="detected-name" title="${displayTitle}">${displayTitle}</div>
-            <div class="detected-badges">
-              <span class="badge-pill ${badgeClass}">${stream.type}</span>
-              <span class="badge-pill badge-quality">${stream.quality || 'HD'}</span>
+          const isHls = stream.type === 'HLS';
+          const badgeClass = isHls ? 'badge-hls' : 'badge-quality';
+
+          card.innerHTML = `
+            <div class="detected-card-top">
+              <div class="detected-name" title="${displayTitle}">${displayTitle}</div>
+              <div class="detected-badges">
+                <span class="badge-pill ${badgeClass}">${stream.type}</span>
+                <span class="badge-pill badge-quality">${stream.quality || 'HD'}</span>
+              </div>
             </div>
-          </div>
-          <button class="btn-download-stream" type="button">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-              <polyline points="7 10 12 15 17 10"></polyline>
-              <line x1="12" y1="15" x2="12" y2="3"></line>
-            </svg>
-            Download in ADM
-          </button>
-        `;
+            <button class="btn-download-stream" type="button">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                <polyline points="7 10 12 15 17 10"></polyline>
+                <line x1="12" y1="15" x2="12" y2="3"></line>
+              </svg>
+              Download in ADM
+            </button>
+          `;
 
-        const downloadBtn = card.querySelector('.btn-download-stream');
-        downloadBtn.addEventListener('click', () => {
-          downloadBtn.disabled = true;
-          downloadBtn.textContent = 'Sending to ADM...';
+          const downloadBtn = card.querySelector('.btn-download-stream');
+          downloadBtn.addEventListener('click', () => {
+            downloadBtn.disabled = true;
+            downloadBtn.textContent = 'Sending to ADM...';
 
-          chrome.runtime.sendMessage({
-            type: 'DOWNLOAD_DETECTED_STREAM',
-            url: stream.url,
-            fileName: `${displayTitle}.mp4`,
-            referrer: tab.url,
-            headers: stream.headers || {}
-          }, (res) => {
-            if (res && res.success) {
-              downloadBtn.className = 'btn-download-stream success';
-              downloadBtn.textContent = '✓ Sent to ADM!';
-              setTimeout(() => {
-                downloadBtn.className = 'btn-download-stream';
-                downloadBtn.textContent = 'Download in ADM';
-                downloadBtn.disabled = false;
-              }, 2500);
-            } else {
-              downloadBtn.textContent = 'Failed';
-              setTimeout(() => {
-                downloadBtn.textContent = 'Download in ADM';
-                downloadBtn.disabled = false;
-              }, 2000);
-            }
+            chrome.runtime.sendMessage({
+              type: 'DOWNLOAD_DETECTED_STREAM',
+              url: stream.url,
+              fileName: `${displayTitle}.mp4`,
+              referrer: tab.url,
+              headers: stream.headers || {}
+            }, (res) => {
+              if (res && res.success) {
+                downloadBtn.className = 'btn-download-stream success';
+                downloadBtn.textContent = '✓ Sent to ADM!';
+                setTimeout(() => {
+                  downloadBtn.className = 'btn-download-stream';
+                  downloadBtn.textContent = 'Download in ADM';
+                  downloadBtn.disabled = false;
+                }, 2500);
+              } else {
+                downloadBtn.textContent = 'Failed';
+                setTimeout(() => {
+                  downloadBtn.textContent = 'Download in ADM';
+                  downloadBtn.disabled = false;
+                }, 2000);
+              }
+            });
           });
-        });
 
-        if (detectedList) detectedList.appendChild(card);
-      });
+          if (detectedList) detectedList.appendChild(card);
+        });
+      }
+
+      if (subtitles.length === 0) {
+        if (detectedSubSection) detectedSubSection.style.display = 'none';
+      } else {
+        if (detectedSubSection) detectedSubSection.style.display = 'block';
+        if (detectedSubCountBadge) detectedSubCountBadge.textContent = String(subtitles.length);
+        if (detectedSubList) detectedSubList.innerHTML = '';
+
+        subtitles.forEach((sub) => {
+          const card = document.createElement('div');
+          card.className = 'detected-card';
+
+          const cleanTabTitle = tab.title ? tab.title.replace(/[\\/:*?"<>|]/g, '').trim() : '';
+          const langSuffix = sub.language && sub.language !== 'Subtitles' && sub.language !== 'English' ? `.${sub.language}` : '';
+          const srtFileName = `${cleanTabTitle || 'Subtitles'}${langSuffix}.srt`;
+
+          card.innerHTML = `
+            <div class="detected-card-top">
+              <div class="detected-name" title="${srtFileName}">${sub.language || 'Subtitles'} (${sub.title || sub.format})</div>
+              <div class="detected-badges">
+                <span class="badge-pill badge-srt">SRT</span>
+              </div>
+            </div>
+            <button class="btn-download-stream" style="background: linear-gradient(135deg, #d97706, #b45309);" type="button">
+              Download .SRT
+            </button>
+          `;
+
+          const subBtn = card.querySelector('.btn-download-stream');
+          subBtn.addEventListener('click', () => {
+            subBtn.disabled = true;
+            subBtn.textContent = 'Converting to .SRT...';
+
+            chrome.runtime.sendMessage({
+              type: 'DOWNLOAD_SUBTITLE',
+              url: sub.url,
+              fileName: srtFileName,
+              referrer: tab.url,
+              headers: sub.headers || {}
+            }, (res) => {
+              if (res && res.success) {
+                subBtn.className = 'btn-download-stream success';
+                subBtn.style.background = '#059669';
+                subBtn.textContent = '✓ .SRT Saved in ADM!';
+                setTimeout(() => {
+                  subBtn.className = 'btn-download-stream';
+                  subBtn.style.background = 'linear-gradient(135deg, #d97706, #b45309)';
+                  subBtn.textContent = 'Download .SRT';
+                  subBtn.disabled = false;
+                }, 2500);
+              } else {
+                subBtn.textContent = 'Failed';
+                setTimeout(() => {
+                  subBtn.textContent = 'Download .SRT';
+                  subBtn.disabled = false;
+                }, 2000);
+              }
+            });
+          });
+
+          if (detectedSubList) detectedSubList.appendChild(card);
+        });
+      }
     });
   });
 }

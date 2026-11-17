@@ -6,6 +6,7 @@ import { DownloadTask } from './DownloadEngine.js';
 import { HlsStreamGrabber } from './StreamGrabber.js';
 import { YoutubeDownloader } from './YoutubeDownloader.js';
 import { TeraboxDownloader } from './TeraboxDownloader.js';
+import { SubtitleDownloader } from './SubtitleDownloader.js';
 
 export class TaskManager extends EventEmitter {
   constructor(options = {}) {
@@ -116,7 +117,24 @@ export class TaskManager extends EventEmitter {
     });
   }
 
-  async addTask({ url, fileName, savePath, category, maxConnections, headers, autoStart = true }) {
+  async addTask({ url, fileName, savePath, category, maxConnections, headers, quality, convertToSrt = false, autoStart = true }) {
+    // Check if it's a subtitle download (.vtt / .srt / .ass / .ssa or explicit convertToSrt)
+    const isSubtitleFile = convertToSrt || /\.(vtt|srt|ass|ssa)(\?|$)/i.test(url);
+    if (isSubtitleFile) {
+      const subTask = new SubtitleDownloader({
+        url,
+        fileName,
+        savePath,
+        headers: headers || {}
+      });
+      this.attachTaskEvents(subTask);
+      this.downloads.set(subTask.id, subTask);
+      this.saveState();
+      this.emit('task:added', subTask.toJSON());
+      if (autoStart) subTask.start();
+      return subTask;
+    }
+
     // Check if it's a streaming video portal supported by our extractor (YouTube, TikTok, Twitter/X, Instagram, Reddit, Vimeo, Twitch, etc.)
     const isStreamingPortal = [
       'youtube.com', 'youtu.be', 'tiktok.com', 'instagram.com', 'facebook.com', 
@@ -126,7 +144,7 @@ export class TaskManager extends EventEmitter {
     ].some(domain => url.toLowerCase().includes(domain));
 
     if (isStreamingPortal) {
-      const ytTask = new YoutubeDownloader({ url, fileName, savePath });
+      const ytTask = new YoutubeDownloader({ url, fileName, savePath, quality });
       this.attachTaskEvents(ytTask);
       this.downloads.set(ytTask.id, ytTask);
       this.saveState();
