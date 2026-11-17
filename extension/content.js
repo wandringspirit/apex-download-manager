@@ -1,5 +1,26 @@
 // Video Grabber - Authentic IDM-style floating download badge on web players
 (() => {
+  let latestStreamUrl = null;
+  let latestStreamHeaders = {};
+
+  if (chrome && chrome.runtime && chrome.runtime.onMessage) {
+    chrome.runtime.onMessage.addListener((msg) => {
+      if (msg && msg.type === 'STREAM_DETECTED' && msg.stream) {
+        latestStreamUrl = msg.stream.url;
+        if (msg.stream.headers) {
+          latestStreamHeaders = { ...latestStreamHeaders, ...msg.stream.headers };
+        }
+        const videos = document.querySelectorAll('video');
+        videos.forEach(v => {
+          if (!v._adm_stream_url) {
+            v._adm_stream_url = msg.stream.url;
+          }
+          ensureButtonForMedia(v);
+        });
+      }
+    });
+  }
+
   // Finds the exact active player container (never walks past the actual video player wrapper)
   function findBestPlayerContainer(mediaElement) {
     if (!mediaElement) return document.body;
@@ -117,9 +138,22 @@
       dropdown.classList.remove('adm-idm-dropdown-open');
       if (label) label.textContent = 'Sending...';
 
-      const pageTitle = document.title.replace(/[\\/:*?"<>|]/g, '').trim() || 'video';
-      let targetUrl = mediaElement.currentSrc || mediaElement.src || window.location.href;
-      if (window.location.hostname.includes('youtube.com') || window.location.hostname.includes('youtu.be') || targetUrl.startsWith('blob:')) {
+      let pageTitle = '';
+      try {
+        if (window.top && window.top.document && window.top.document.title) {
+          pageTitle = window.top.document.title;
+        }
+      } catch (_) {}
+      if (!pageTitle) {
+        pageTitle = document.title;
+      }
+      pageTitle = pageTitle.replace(/[\\/:*?"<>|]/g, '').trim() || 'video';
+
+      let targetUrl = mediaElement.currentSrc || mediaElement.src || '';
+      if (!targetUrl || targetUrl.startsWith('blob:')) {
+        targetUrl = mediaElement._adm_stream_url || latestStreamUrl || '';
+      }
+      if (window.location.hostname.includes('youtube.com') || window.location.hostname.includes('youtu.be') || !targetUrl) {
         targetUrl = window.location.href;
       }
 
@@ -127,6 +161,7 @@
         type: 'GRAB_MEDIA',
         url: targetUrl,
         fileName: `${pageTitle}.mp4`,
+        headers: latestStreamHeaders,
         quality
       };
 
@@ -299,10 +334,10 @@
       if (sessionStorage.getItem('adm_dismissed_' + pageKey) === '1') return;
     } catch (_) {}
 
-    // Filter out tiny audio elements or miniature preview icons
+    // Filter out tiny audio elements or miniature preview icons unless streaming video is active
     const rect = mediaElement.getBoundingClientRect();
-    const isVisible = rect.width > 160 && rect.height > 90;
-    if (!isVisible && !mediaElement.autoplay && mediaElement.paused && !mediaElement.controls) {
+    const isVisible = (rect.width > 120 && rect.height > 60) || (!mediaElement.paused && rect.width > 0);
+    if (!isVisible && !mediaElement.autoplay && mediaElement.paused && !mediaElement.controls && !mediaElement._adm_stream_url && !latestStreamUrl) {
       return;
     }
 

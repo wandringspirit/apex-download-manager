@@ -122,6 +122,117 @@
       transition: background 0.2s;
     }
     .btn:hover { background: #0369a1; }
+    .detected-section {
+      margin-top: 14px;
+      border-top: 1px solid #1e293b;
+      padding-top: 12px;
+    }
+    .detected-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 8px;
+    }
+    .detected-title {
+      font-size: 11px;
+      font-weight: 700;
+      color: #38bdf8;
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .detected-count-badge {
+      background: #0284c7;
+      color: #fff;
+      font-size: 10px;
+      padding: 1px 6px;
+      border-radius: 999px;
+      font-weight: 700;
+    }
+    .detected-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      max-height: 190px;
+      overflow-y: auto;
+    }
+    .detected-card {
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 8px;
+      padding: 9px 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      transition: border-color 0.2s;
+    }
+    .detected-card:hover {
+      border-color: #0284c7;
+    }
+    .detected-card-top {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 6px;
+    }
+    .detected-name {
+      font-size: 11.5px;
+      font-weight: 600;
+      color: #f1f5f9;
+      word-break: break-all;
+      line-height: 1.3;
+      max-height: 2.6em;
+      overflow: hidden;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+    }
+    .detected-badges {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      flex-wrap: wrap;
+    }
+    .badge-pill {
+      font-size: 9.5px;
+      padding: 2px 5px;
+      border-radius: 4px;
+      font-weight: 700;
+      letter-spacing: 0.3px;
+    }
+    .badge-hls {
+      background: rgba(14, 165, 233, 0.2);
+      color: #38bdf8;
+      border: 1px solid rgba(14, 165, 233, 0.4);
+    }
+    .badge-quality {
+      background: rgba(16, 185, 129, 0.2);
+      color: #34d399;
+      border: 1px solid rgba(16, 185, 129, 0.4);
+    }
+    .btn-download-stream {
+      padding: 5px 8px;
+      background: linear-gradient(135deg, #0284c7, #0369a1);
+      color: #fff;
+      border: none;
+      border-radius: 5px;
+      font-size: 11px;
+      font-weight: 600;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 4px;
+      transition: all 0.2s;
+    }
+    .btn-download-stream:hover {
+      background: linear-gradient(135deg, #0369a1, #075985);
+    }
+    .btn-download-stream.success {
+      background: #059669;
+    }
     .info-footer {
       margin-top: 12px;
       font-size: 10px;
@@ -152,6 +263,19 @@
       <input type="checkbox" id="autoCatchToggle" checked>
       <span class="slider"></span>
     </label>
+  </div>
+
+  <div id="detectedStreamsSection" class="detected-section" style="display: none;">
+    <div class="detected-header">
+      <div class="detected-title">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+          <polygon points="5 3 19 12 5 21 5 3"></polygon>
+        </svg>
+        Captured Video Streams
+      </div>
+      <span id="detectedCountBadge" class="detected-count-badge">0</span>
+    </div>
+    <div id="detectedList" class="detected-list"></div>
   </div>
 
   <div class="quick-add">

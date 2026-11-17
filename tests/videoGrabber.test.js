@@ -190,4 +190,49 @@ describe('VideoGrabber & Extension Bridge Integration Suite', () => {
     // Verification: Button MUST NOT resurrect if user explicitly dismissed it
     assert.strictEqual(moviePlayer.children.length, 0);
   });
+
+  it('TC-21: HLS Stream Routing with Custom Headers and toJSON Serialization', async () => {
+    const { TaskManager } = await import('../core/TaskManager.js');
+    const { HlsStreamGrabber } = await import('../core/StreamGrabber.js');
+    const os = await import('os');
+    const path = await import('path');
+    const fs = await import('fs');
+
+    const tempDir = path.join(os.tmpdir(), `adm_hls_test_${Date.now()}`);
+    fs.mkdirSync(tempDir, { recursive: true });
+
+    try {
+      const tm = new TaskManager({
+        storagePath: path.join(tempDir, 'tasks.json'),
+        maxConcurrent: 2
+      });
+
+      const m3u8Url = 'https://cdn.example.com/anime/ep1/master.m3u8?token=xyz';
+      const task = await tm.addTask({
+        url: m3u8Url,
+        fileName: 'One_Piece_Film_Z.mp4',
+        savePath: tempDir,
+        headers: {
+          Referer: 'https://enma.lol/',
+          Origin: 'https://enma.lol'
+        },
+        autoStart: false
+      });
+
+      assert.strictEqual(task instanceof HlsStreamGrabber, true, 'Task must be an HlsStreamGrabber instance');
+      assert.strictEqual(task.headers.Referer, 'https://enma.lol/');
+      assert.strictEqual(task.headers.Origin, 'https://enma.lol');
+      assert.strictEqual(task.category, 'Video');
+      assert.strictEqual(task.fileName, 'One_Piece_Film_Z.mp4');
+
+      const json = task.toJSON();
+      assert.strictEqual(typeof json, 'object');
+      assert.strictEqual(json.id, task.id);
+      assert.strictEqual(json.url, m3u8Url);
+      assert.strictEqual(json.status, 'idle');
+      assert.strictEqual(json.category, 'Video');
+    } finally {
+      try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch (_) {}
+    }
+  });
 });

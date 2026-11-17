@@ -142,11 +142,17 @@ export class TaskManager extends EventEmitter {
 
     // Check if it's an HLS stream
     if (url.includes('.m3u8')) {
-      const hlsTask = new HlsStreamGrabber({ url, fileName, savePath });
-      hlsTask.on('progress', (data) => this.emit('task:progress', data));
-      hlsTask.on('status', (status) => this.emit('task:status', { id: hlsTask.id, status }));
-      hlsTask.on('complete', (data) => this.emit('task:complete', data));
+      const hlsTask = new HlsStreamGrabber({
+        url,
+        fileName,
+        savePath,
+        category: category || 'Video',
+        headers: headers || {}
+      });
+      this.attachTaskEvents(hlsTask);
       this.downloads.set(hlsTask.id, hlsTask);
+      this.saveState();
+      this.emit('task:added', hlsTask.toJSON ? hlsTask.toJSON() : hlsTask);
       if (autoStart) hlsTask.start();
       return hlsTask;
     }

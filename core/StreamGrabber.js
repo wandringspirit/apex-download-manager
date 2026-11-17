@@ -5,6 +5,7 @@ import path from 'path';
 import os from 'os';
 import { EventEmitter } from 'events';
 import { URL } from 'url';
+import { exec } from 'child_process';
 
 export class HlsStreamGrabber extends EventEmitter {
   constructor(options) {
@@ -13,22 +14,51 @@ export class HlsStreamGrabber extends EventEmitter {
     this.playlistUrl = options.url;
     this.savePath = options.savePath || path.join(os.homedir(), 'Downloads');
     this.fileName = options.fileName || `Stream_${Date.now()}.mp4`;
+    if (!path.extname(this.fileName)) {
+      this.fileName += '.mp4';
+    }
+    this.category = options.category || 'Video';
     this.status = 'idle'; // 'idle' | 'parsing' | 'downloading' | 'merging' | 'completed' | 'error'
     this.segments = []; // array of URLs
     this.totalSegments = 0;
     this.downloadedSegments = 0;
     this.downloadedBytes = 0;
+    this.totalBytes = 0;
+    this.speed = 0;
+    this.peakSpeed = 0;
+    this.avgSpeed = 0;
+    this.speedSamples = [];
+    this.eta = 0;
     this.concurrency = options.concurrency || 8;
     this.activeWorkers = 0;
     this.tempDir = path.join(this.savePath, `.temp_${this.id}`);
     this.isCancelled = false;
+    this.headers = options.headers || {};
+    this.createdAt = options.createdAt || new Date().toISOString();
+  }
+
+  getFilePath() {
+    return path.join(this.savePath, this.fileName);
+  }
+
+  getMetaPath() {
+    return path.join(this.savePath, `.${this.fileName}.adm.json`);
+  }
+
+  buildHeaders(targetUrl) {
+    const defaultHeaders = {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      'Accept': '*/*'
+    };
+    return { ...defaultHeaders, ...this.headers };
   }
 
   async fetchText(url) {
     return new Promise((resolve, reject) => {
       const parsed = new URL(url);
       const client = parsed.protocol === 'https:' ? https : http;
-      client.get(url, { headers: { 'User-Agent': 'Mozilla/5.0' } }, (res) => {
+      const headers = this.buildHeaders(url);
+      client.get(url, { headers }, (res) => {
         if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
           return this.fetchText(new URL(res.headers.location, url).href).then(resolve).catch(reject);
         }
@@ -138,8 +168,14 @@ export class HlsStreamGrabber extends EventEmitter {
       const parsed = new URL(url);
       const client = parsed.protocol === 'https:' ? https : http;
       const fileStream = fs.createWriteStream(dest);
+      const headers = this.buildHeaders(url);
 
-      client.get(url, { headers: { 'User-Agent': 'Mozilla/5.0' } }, (res) => {
+      client.get(url, { headers }, (res) => {
+        if (res.statusCode >= 400) {
+          fileStream.close();
+          fs.unlink(dest, () => {});
+          return reject(new Error(`HTTP ${res.statusCode} downloading segment`));
+        }
         res.pipe(fileStream);
         res.on('data', chunk => this.downloadedBytes += chunk.length);
         fileStream.on('finish', () => {
@@ -158,7 +194,8 @@ export class HlsStreamGrabber extends EventEmitter {
     this.emit('status', this.status);
 
     const finalPath = path.join(this.savePath, this.fileName);
-    const writeStream = fs.createWriteStream(finalPath);
+    const tempTsPath = path.join(this.tempDir, `merged_raw_${Date.now()}.ts`);
+    const writeStream = fs.createWriteStream(tempTsPath);
 
     for (let i = 0; i < this.totalSegments; i++) {
       const partPath = path.join(this.tempDir, `part_${String(i).padStart(6, '0')}.ts`);
@@ -171,14 +208,39 @@ export class HlsStreamGrabber extends EventEmitter {
     writeStream.end();
 
     writeStream.on('finish', () => {
-      // Clean temp dir
-      try {
-        fs.rmSync(this.tempDir, { recursive: true, force: true });
-      } catch (e) {}
+      // Remux via FFmpeg with FastStart for instantaneous 0.01s seeking in VLC
+      const finalizeSuccess = () => {
+        try {
+          fs.rmSync(this.tempDir, { recursive: true, force: true });
+        } catch (e) {}
 
-      this.status = 'completed';
-      this.emit('status', this.status);
-      this.emit('complete', { id: this.id, filePath: finalPath });
+        if (fs.existsSync(finalPath)) {
+          try {
+            const stat = fs.statSync(finalPath);
+            this.totalBytes = stat.size;
+            this.downloadedBytes = stat.size;
+          } catch (_) {}
+        }
+
+        this.status = 'completed';
+        this.emit('status', this.status);
+        this.emit('complete', { id: this.id, filePath: finalPath });
+      };
+
+      const remuxCmd = `ffmpeg -y -i "${tempTsPath}" -c copy -movflags +faststart "${finalPath}"`;
+      exec(remuxCmd, (err) => {
+        if (!err && fs.existsSync(finalPath) && fs.statSync(finalPath).size > 0) {
+          try { fs.unlinkSync(tempTsPath); } catch (_) {}
+          finalizeSuccess();
+        } else {
+          // Direct fallback if ffmpeg is missing or failed
+          try {
+            if (fs.existsSync(finalPath)) fs.unlinkSync(finalPath);
+            fs.renameSync(tempTsPath, finalPath);
+          } catch (_) {}
+          finalizeSuccess();
+        }
+      });
     });
   }
 
@@ -193,6 +255,32 @@ export class HlsStreamGrabber extends EventEmitter {
 
   setConcurrency(newCount) {
     this.concurrency = Math.max(1, Math.min(64, parseInt(newCount, 10) || 8));
+  }
+
+  toJSON() {
+    const percent = this.totalSegments > 0 ? Number(((this.downloadedSegments / this.totalSegments) * 100).toFixed(1)) : 0;
+    return {
+      id: this.id,
+      url: this.playlistUrl,
+      fileName: this.fileName,
+      savePath: this.savePath,
+      filePath: this.getFilePath(),
+      category: this.category,
+      status: this.status,
+      totalBytes: this.totalBytes || this.downloadedBytes,
+      downloadedBytes: this.downloadedBytes,
+      percent,
+      speed: this.speed,
+      peakSpeed: this.peakSpeed,
+      avgSpeed: this.avgSpeed,
+      speedSamples: this.speedSamples,
+      eta: this.eta,
+      resumable: true,
+      maxConnections: this.concurrency,
+      totalSegments: this.totalSegments,
+      downloadedSegments: this.downloadedSegments,
+      createdAt: this.createdAt
+    };
   }
 }
 

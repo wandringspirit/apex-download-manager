@@ -8,7 +8,8 @@
     "storage",
     "contextMenus",
     "activeTab",
-    "cookies"
+    "cookies",
+    "webRequest"
   ],
   "host_permissions": [
     "<all_urls>",
@@ -22,6 +23,7 @@
       "matches": ["<all_urls>"],
       "js": ["content.js"],
       "css": ["content.css"],
+      "all_frames": true,
       "run_at": "document_idle"
     }
   ],

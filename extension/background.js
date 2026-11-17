@@ -233,10 +233,242 @@ async function syncCookiesToADM(domain) {
   }
 }
 
-// Listen for messages from content scripts (e.g. Video Grabber button)
+// =========================================================================
+// Real-Time Network Stream Sniffer (HLS .m3u8, DASH .mpd, Video Segments)
+// =========================================================================
+const detectedStreamsByTab = new Map(); // tabId -> Array<StreamEntry>
+
+function isAdOrTrackerUrl(url) {
+  if (!url) return true;
+  const lower = url.toLowerCase();
+  const adKeywords = [
+    'googleads', 'doubleclick', 'analytics', 'facebook.net', 'adnxs',
+    'scorecardresearch', 'taboola', 'outbrain', 'popads', 'adservice',
+    'adsystem', 'googlesyndication', 'hotjar', 'clarity.ms', 'segment.io'
+  ];
+  return adKeywords.some(k => lower.includes(k));
+}
+
+function detectStreamType(url, contentType = '') {
+  if (!url || typeof url !== 'string') return null;
+  const cleanUrl = url.split('#')[0];
+  const lower = cleanUrl.toLowerCase();
+  const cType = (contentType || '').toLowerCase();
+
+  // HLS stream (.m3u8 or HLS content types)
+  if (
+    /\.m3u8(\?|$)/i.test(cleanUrl) ||
+    lower.includes('/m3u8') ||
+    lower.includes('/hls/') ||
+    cType.includes('application/vnd.apple.mpegurl') ||
+    cType.includes('application/x-mpegurl') ||
+    cType.includes('audio/x-mpegurl')
+  ) {
+    let quality = 'Auto';
+    if (lower.includes('1080')) quality = '1080p FHD';
+    else if (lower.includes('720')) quality = '720p HD';
+    else if (lower.includes('480')) quality = '480p SD';
+    else if (lower.includes('360')) quality = '360p';
+    return { type: 'HLS', label: 'HLS Stream (.m3u8)', quality, isPlaylist: true };
+  }
+
+  // DASH stream (.mpd)
+  if (/\.mpd(\?|$)/i.test(cleanUrl) || cType.includes('application/dash+xml')) {
+    return { type: 'DASH', label: 'DASH Manifest (.mpd)', quality: 'Auto', isPlaylist: true };
+  }
+
+  // Direct video file streams
+  if (
+    /\.(mp4|webm|mkv|mov)(\?|$)/i.test(cleanUrl) ||
+    cType.startsWith('video/')
+  ) {
+    if (cType.includes('mp2t') || lower.endsWith('.ts')) return null; // Skip individual TS chunks to avoid spamming 1000 items
+    const ext = (cleanUrl.split('.').pop().split('?')[0] || 'MP4').toUpperCase();
+    return { type: 'DIRECT', label: `${ext} Video`, quality: 'Direct', isPlaylist: false };
+  }
+
+  return null;
+}
+
+function recordDetectedStream(tabId, url, typeInfo, headers = {}) {
+  if (!tabId || tabId < 0 || !url || isAdOrTrackerUrl(url)) return;
+
+  if (!detectedStreamsByTab.has(tabId)) {
+    detectedStreamsByTab.set(tabId, []);
+  }
+  const streamList = detectedStreamsByTab.get(tabId);
+
+  // Deduplicate: If URL already captured, merge any new headers
+  const existing = streamList.find(s => s.url === url);
+  if (existing) {
+    if (headers && Object.keys(headers).length > 0) {
+      existing.headers = { ...existing.headers, ...headers };
+    }
+    return;
+  }
+
+  // Generate clean candidate title
+  let candidateTitle = '';
+  try {
+    const u = new URL(url);
+    const lastSeg = u.pathname.split('/').filter(Boolean).pop() || '';
+    candidateTitle = decodeURIComponent(lastSeg.split('?')[0]);
+  } catch (_) {}
+
+  const streamEntry = {
+    id: Math.random().toString(36).substring(2, 9),
+    tabId,
+    url,
+    title: candidateTitle || `${typeInfo.type}_Video`,
+    type: typeInfo.type,
+    label: typeInfo.label,
+    quality: typeInfo.quality,
+    isPlaylist: typeInfo.isPlaylist,
+    headers: headers || {},
+    timestamp: Date.now()
+  };
+
+  if (streamList.length >= 20) {
+    streamList.shift();
+  }
+  streamList.push(streamEntry);
+
+  // Update extension action badge on this tab
+  try {
+    if (chrome.action) {
+      chrome.action.setBadgeText({ tabId, text: String(streamList.length) });
+      chrome.action.setBadgeBackgroundColor({ tabId, color: '#0284c7' });
+    }
+  } catch (_) {}
+
+  // Broadcast to all frames in the tab
+  try {
+    chrome.tabs.sendMessage(tabId, {
+      type: 'STREAM_DETECTED',
+      stream: streamEntry
+    }, () => {
+      void chrome.runtime.lastError;
+    });
+  } catch (_) {}
+}
+
+if (chrome.webRequest && chrome.webRequest.onBeforeRequest) {
+  try {
+    chrome.webRequest.onBeforeRequest.addListener(
+      (details) => {
+        if (!details || details.tabId < 0) return;
+        const typeInfo = detectStreamType(details.url);
+        if (typeInfo) {
+          const headers = {};
+          if (details.initiator) {
+            headers['Origin'] = details.initiator;
+            headers['Referer'] = details.initiator + '/';
+          }
+          recordDetectedStream(details.tabId, details.url, typeInfo, headers);
+        }
+      },
+      { urls: ['<all_urls>'] }
+    );
+  } catch (err) {
+    console.warn('[ADM Extension] webRequest.onBeforeRequest failed:', err);
+  }
+}
+
+if (chrome.webRequest && chrome.webRequest.onBeforeSendHeaders) {
+  try {
+    chrome.webRequest.onBeforeSendHeaders.addListener(
+      (details) => {
+        if (!details || details.tabId < 0) return;
+        const streamList = detectedStreamsByTab.get(details.tabId);
+        if (!streamList || streamList.length === 0) return;
+        const entry = streamList.find(s => s.url === details.url);
+        if (entry && details.requestHeaders) {
+          entry.headers = entry.headers || {};
+          for (const h of details.requestHeaders) {
+            const name = h.name.toLowerCase();
+            if (['referer', 'origin', 'user-agent', 'cookie'].includes(name)) {
+              entry.headers[h.name] = h.value;
+            }
+          }
+        }
+      },
+      { urls: ['<all_urls>'] },
+      ['requestHeaders']
+    );
+  } catch (err) {
+    console.warn('[ADM Extension] webRequest.onBeforeSendHeaders failed:', err);
+  }
+}
+
+if (chrome.webRequest && chrome.webRequest.onHeadersReceived) {
+  try {
+    chrome.webRequest.onHeadersReceived.addListener(
+      (details) => {
+        if (!details || details.tabId < 0) return;
+        let cType = '';
+        if (details.responseHeaders) {
+          const ctHeader = details.responseHeaders.find(h => h.name.toLowerCase() === 'content-type');
+          if (ctHeader && ctHeader.value) cType = ctHeader.value;
+        }
+        const typeInfo = detectStreamType(details.url, cType);
+        if (typeInfo) {
+          recordDetectedStream(details.tabId, details.url, typeInfo);
+        }
+      },
+      { urls: ['<all_urls>'] },
+      ['responseHeaders']
+    );
+  } catch (err) {
+    console.warn('[ADM Extension] webRequest.onHeadersReceived failed:', err);
+  }
+}
+
+// Clean up streams when tabs close or navigate
+if (chrome.tabs) {
+  chrome.tabs.onRemoved.addListener((tabId) => {
+    detectedStreamsByTab.delete(tabId);
+  });
+  chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
+    if (changeInfo.status === 'loading' && changeInfo.url) {
+      detectedStreamsByTab.delete(tabId);
+      try {
+        if (chrome.action) chrome.action.setBadgeText({ tabId, text: '' });
+      } catch (_) {}
+    }
+  });
+}
+
+// Listen for messages from content scripts and popup
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === 'CHECK_ADM_STATUS') {
     isADMAvailable().then(status => sendResponse({ online: status }));
+    return true;
+  }
+
+  if (message.type === 'GET_DETECTED_STREAMS') {
+    const tabId = message.tabId || (sender && sender.tab ? sender.tab.id : null);
+    if (tabId && detectedStreamsByTab.has(tabId)) {
+      sendResponse({ streams: detectedStreamsByTab.get(tabId) });
+    } else {
+      sendResponse({ streams: [] });
+    }
+    return true;
+  }
+
+  if (message.type === 'DOWNLOAD_DETECTED_STREAM') {
+    (async () => {
+      let headers = message.headers || {};
+      if (message.url && (!headers || Object.keys(headers).length === 0)) {
+        headers = await buildRequestHeaders(message.url, message.referrer || '');
+      }
+      const result = await sendToADM({
+        url: message.url,
+        fileName: message.fileName || '',
+        referrer: message.referrer || '',
+        headers
+      });
+      sendResponse({ success: !!result, result });
+    })();
     return true;
   }
 
@@ -252,7 +484,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     sendToADM({
       url: message.url,
       fileName: message.fileName || '',
-      referrer: sender.tab ? sender.tab.url : ''
+      referrer: sender.tab ? sender.tab.url : '',
+      headers: message.headers && typeof message.headers === 'object' ? message.headers : undefined
     }).then(result => {
       sendResponse({ success: !!result, result });
     });
