@@ -8,6 +8,14 @@ import { BridgeServer } from '../core/BridgeServer.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+// Prevent transient network/filesystem stream errors from crashing the Electron desktop app
+process.on('uncaughtException', (err) => {
+  console.error('[ADM Main] Uncaught exception:', err);
+});
+process.on('unhandledRejection', (reason) => {
+  console.error('[ADM Main] Unhandled promise rejection:', reason);
+});
+
 let mainWindow = null;
 let tray = null;
 let taskManager = null;

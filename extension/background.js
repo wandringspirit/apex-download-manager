@@ -481,9 +481,17 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       syncCookiesToADM('.1024tera.com');
       syncCookiesToADM('.terabox.app');
     }
+    // Prefer the top-level tab title when the grabber button was clicked inside a cross-origin embed iframe
+    let resolvedFileName = message.fileName || '';
+    if (sender && sender.frameId > 0 && sender.tab && sender.tab.title) {
+      const cleanTabTitle = sender.tab.title.replace(/[\\/:*?"<>|]/g, '').trim();
+      if (cleanTabTitle) {
+        resolvedFileName = `${cleanTabTitle}.mp4`;
+      }
+    }
     sendToADM({
       url: message.url,
-      fileName: message.fileName || '',
+      fileName: resolvedFileName,
       referrer: sender.tab ? sender.tab.url : '',
       headers: message.headers && typeof message.headers === 'object' ? message.headers : undefined
     }).then(result => {

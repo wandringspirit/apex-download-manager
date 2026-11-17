@@ -235,4 +235,28 @@ describe('VideoGrabber & Extension Bridge Integration Suite', () => {
       try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch (_) {}
     }
   });
+
+  it('TC-22: Strips Fake PNG Header Wrapper from Disguised MPEG-TS Segments', async () => {
+    const { stripFakeImageHeader } = await import('../core/StreamGrabber.js');
+
+    // Simulate 252-byte fake PNG + 0xFF padding followed by 5 valid 188-byte MPEG-TS packets (0x47 sync byte)
+    const fakeHeader = Buffer.alloc(252, 0xff);
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(fakeHeader, 0);
+
+    const tsPayload = Buffer.alloc(188 * 5, 0x11);
+    for (let i = 0; i < 5; i++) {
+      tsPayload[i * 188] = 0x47;
+    }
+
+    const disguised = Buffer.concat([fakeHeader, tsPayload]);
+    const stripped = stripFakeImageHeader(disguised);
+
+    assert.strictEqual(stripped.length, tsPayload.length, 'Fake PNG prefix must be stripped completely');
+    assert.strictEqual(stripped[0], 0x47, 'Stripped buffer must start on MPEG-TS sync byte 0x47');
+    assert.strictEqual(stripped[188], 0x47, 'Second packet sync byte must align at offset 188');
+
+    // Raw TS buffer without fake header must remain untouched
+    const rawResult = stripFakeImageHeader(tsPayload);
+    assert.strictEqual(rawResult.length, tsPayload.length);
+  });
 });

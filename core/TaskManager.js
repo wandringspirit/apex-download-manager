@@ -24,15 +24,21 @@ export class TaskManager extends EventEmitter {
         const raw = fs.readFileSync(this.storagePath, 'utf8');
         const list = JSON.parse(raw);
         for (const item of list) {
-          const task = new DownloadTask(item);
-          task.status = item.status === 'downloading' ? 'paused' : item.status;
+          const isHls = item && typeof item.url === 'string' && item.url.includes('.m3u8');
+          const task = isHls ? new HlsStreamGrabber(item) : new DownloadTask(item);
+          task.status = ['downloading', 'parsing', 'merging'].includes(item.status) ? 'paused' : item.status;
           task.downloadedBytes = item.downloadedBytes || 0;
           task.totalBytes = item.totalBytes || 0;
-          task.segments = item.segments || [];
+          if (isHls) {
+            task.totalSegments = item.totalSegments || 0;
+            task.downloadedSegments = item.downloadedSegments || 0;
+          } else {
+            task.segments = item.segments || [];
+          }
           task.peakSpeed = item.peakSpeed || 0;
           task.avgSpeed = item.avgSpeed || 0;
           task.speedSamples = item.speedSamples || [];
-          task.maxConnections = item.maxConnections || 32;
+          task.maxConnections = item.maxConnections || (isHls ? 8 : 32);
 
           // Synthesize realistic historical speed curve for past completed downloads if empty
           if (task.status === 'completed' && (!task.speedSamples || task.speedSamples.length === 0)) {
