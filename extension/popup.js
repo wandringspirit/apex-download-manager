@@ -125,16 +125,21 @@ function loadDetectedStreams() {
             downloadBtn.disabled = true;
             downloadBtn.textContent = 'Sending to ADM...';
 
+            const autoSub = subtitles.find(s => /eng|^en\b/i.test(String(s.language || s.url || ''))) || subtitles[subtitles.length - 1];
             chrome.runtime.sendMessage({
               type: 'DOWNLOAD_DETECTED_STREAM',
+              tabId: tab.id,
               url: stream.url,
               fileName: `${displayTitle}.mp4`,
               referrer: tab.url,
-              headers: stream.headers || {}
+              headers: stream.headers || {},
+              subtitleUrl: autoSub ? autoSub.url : undefined,
+              subtitleHeaders: autoSub ? autoSub.headers : undefined,
+              subtitleLang: autoSub ? autoSub.language : undefined
             }, (res) => {
               if (res && res.success) {
                 downloadBtn.className = 'btn-download-stream success';
-                downloadBtn.textContent = '✓ Sent to ADM!';
+                downloadBtn.textContent = res.hasSubtitle ? '✓ Sent to ADM (+SRT)!' : '✓ Sent to ADM!';
                 setTimeout(() => {
                   downloadBtn.className = 'btn-download-stream';
                   downloadBtn.textContent = 'Download in ADM';

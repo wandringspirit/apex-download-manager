@@ -38,6 +38,9 @@ export class DownloadTask extends EventEmitter {
     this.throttledReason = options.throttledReason || null;
     this.last429Time = 0;
     this.headers = options.headers || {};
+    this.subtitleUrl = options.subtitleUrl || '';
+    this.subtitleHeaders = options.subtitleHeaders || {};
+    this.subtitleLang = options.subtitleLang || 'English';
     this.originHost = '';
     try { this.originHost = new URL(this.url).hostname; } catch (_) {}
     this.createdAt = options.createdAt || new Date().toISOString();

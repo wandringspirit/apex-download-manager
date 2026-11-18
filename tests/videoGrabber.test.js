@@ -320,4 +320,87 @@ describe('VideoGrabber & Extension Bridge Integration Suite', () => {
       try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch (_) {}
     }
   });
+
+  it('TC-24: HLS StreamGrabber Auto-Embeds Default Soft-Sub (mov_text) Inside Final MP4 for VLC Auto-Load', async () => {
+    const { HlsStreamGrabber } = await import('../core/StreamGrabber.js');
+    const { execFileSync } = await import('child_process');
+    const os = await import('os');
+    const path = await import('path');
+    const fs = await import('fs');
+
+    const tempDir = path.join(os.tmpdir(), `adm_hls_sub_mux_${Date.now()}`);
+    fs.mkdirSync(tempDir, { recursive: true });
+    const sampleTsPath = path.join(tempDir, 'sample_src.ts');
+
+    // Generate a tiny real 2s H.264 MPEG-TS segment with ffmpeg
+    execFileSync(
+      'ffmpeg',
+      ['-y', '-f', 'lavfi', '-i', 'color=c=black:s=320x240:d=2', '-c:v', 'libx264', '-t', '2', '-f', 'mpegts', sampleTsPath],
+      { stdio: 'ignore', windowsHide: true }
+    );
+    const tsBytes = fs.readFileSync(sampleTsPath);
+    const vttBody = 'WEBVTT\n\n00:00:00.100 --> 00:00:01.800\nSubtitles auto-loaded in VLC!\n';
+
+    const server = http.createServer((req, res) => {
+      if (req.url === '/master.m3u8') {
+        res.writeHead(200, { 'Content-Type': 'application/vnd.apple.mpegurl' });
+        res.end('#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:3\n#EXTINF:2.0,\n/seg0.ts\n#EXT-X-ENDLIST\n');
+        return;
+      }
+      if (req.url === '/seg0.ts') {
+        res.writeHead(200, { 'Content-Type': 'video/mp2t' });
+        res.end(tsBytes);
+        return;
+      }
+      if (req.url === '/english.vtt') {
+        res.writeHead(200, { 'Content-Type': 'text/vtt' });
+        res.end(vttBody);
+        return;
+      }
+      res.writeHead(404);
+      res.end();
+    });
+
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+    const port = server.address().port;
+
+    try {
+      const grabber = new HlsStreamGrabber({
+        url: `http://127.0.0.1:${port}/master.m3u8`,
+        fileName: 'One Piece AutoSub.mp4',
+        savePath: tempDir,
+        subtitleUrl: `http://127.0.0.1:${port}/english.vtt`,
+        subtitleLang: 'English'
+      });
+
+      const completion = await new Promise((resolve, reject) => {
+        grabber.on('complete', resolve);
+        grabber.on('error', reject);
+        grabber.start();
+      });
+
+      assert.strictEqual(completion.subtitleEmbedded, true, 'Subtitle must be embedded inside MP4');
+      const finalMp4 = path.join(tempDir, 'One Piece AutoSub.mp4');
+      assert.strictEqual(fs.existsSync(finalMp4), true);
+
+      const probeJson = JSON.parse(
+        execFileSync(
+          'ffprobe',
+          ['-v', 'error', '-show_streams', '-of', 'json', finalMp4],
+          { encoding: 'utf8', windowsHide: true }
+        )
+      );
+      const videoStream = probeJson.streams.find(s => s.codec_type === 'video');
+      const subStream = probeJson.streams.find(s => s.codec_type === 'subtitle');
+
+      assert.ok(videoStream, 'MP4 must contain video stream');
+      assert.ok(subStream, 'MP4 must contain embedded subtitle stream');
+      assert.strictEqual(subStream.codec_name, 'mov_text');
+      assert.strictEqual(subStream.tags?.language, 'eng');
+      assert.strictEqual(subStream.disposition?.default, 1, 'Subtitle stream must be marked default for VLC auto-load');
+    } finally {
+      server.close();
+      try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch (_) {}
+    }
+  });
 });

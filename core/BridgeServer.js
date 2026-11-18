@@ -96,6 +96,9 @@ export class BridgeServer {
               quality: data.quality,
               convertToSrt: !!data.convertToSrt,
               headers: data.headers && typeof data.headers === 'object' ? data.headers : undefined,
+              subtitleUrl: data.subtitleUrl || '',
+              subtitleHeaders: data.subtitleHeaders && typeof data.subtitleHeaders === 'object' ? data.subtitleHeaders : undefined,
+              subtitleLang: data.subtitleLang || '',
               autoStart: data.autoStart !== false
             });
 

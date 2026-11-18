@@ -6,6 +6,24 @@ import os from 'os';
 import { EventEmitter } from 'events';
 import { URL } from 'url';
 import { execFile } from 'child_process';
+import { vttToSrt } from './SubtitleDownloader.js';
+
+function langToIso639_2(lang) {
+  const l = String(lang || '').toLowerCase();
+  if (l.includes('jap') || l === 'ja') return 'jpn';
+  if (l.includes('spa') || l === 'es') return 'spa';
+  if (l.includes('fre') || l.includes('fra') || l === 'fr') return 'fre';
+  if (l.includes('ger') || l.includes('deu') || l === 'de') return 'ger';
+  if (l.includes('ara') || l === 'ar') return 'ara';
+  if (l.includes('hin') || l === 'hi') return 'hin';
+  if (l.includes('por') || l === 'pt') return 'por';
+  if (l.includes('ita') || l === 'it') return 'ita';
+  if (l.includes('rus') || l === 'ru') return 'rus';
+  if (l.includes('kor') || l === 'ko') return 'kor';
+  if (l.includes('chi') || l.includes('zho') || l === 'zh') return 'chi';
+  if (l.includes('ind') || l === 'id') return 'ind';
+  return 'eng';
+}
 
 // Shared Cloudflare/Google DoH cache so ISP-blocked CDNs (e.g. tiktokcdn.com) resolve once and stream at full speed
 const dohCache = new Map(); // hostname -> { ip, expiresAt }
@@ -130,6 +148,10 @@ export class HlsStreamGrabber extends EventEmitter {
     this.isPaused = false;
     this.error = null;
     this.headers = options.headers || {};
+    this.subtitleUrl = options.subtitleUrl || '';
+    this.subtitleHeaders = options.subtitleHeaders || {};
+    this.subtitleLang = options.subtitleLang || 'English';
+    this.subtitleEmbedded = false;
     this.createdAt = options.createdAt || new Date().toISOString();
   }
 
@@ -147,16 +169,16 @@ export class HlsStreamGrabber extends EventEmitter {
     return path.join(this.savePath, `.${this.fileName}.adm.json`);
   }
 
-  buildHeaders(targetUrl) {
+  buildHeaders(targetUrl, overrideHeaders = null) {
     const defaultHeaders = {
       'User-Agent':
         'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
       Accept: '*/*'
     };
-    return { ...defaultHeaders, ...this.headers };
+    return { ...defaultHeaders, ...(overrideHeaders || this.headers) };
   }
 
-  requestRaw(url, { useDoH = false, timeoutMs = 12000, redirectCount = 0, onChunk = null } = {}) {
+  requestRaw(url, { useDoH = false, timeoutMs = 12000, redirectCount = 0, onChunk = null, overrideHeaders = null } = {}) {
     return new Promise(async (resolve, reject) => {
       if (redirectCount > 5) {
         return reject(new Error('Too many redirects'));
@@ -171,7 +193,7 @@ export class HlsStreamGrabber extends EventEmitter {
 
       const isHttps = parsed.protocol === 'https:';
       const client = isHttps ? https : http;
-      const headers = this.buildHeaders(url);
+      const headers = this.buildHeaders(url, overrideHeaders);
 
       let connectHost = parsed.hostname;
       if (useDoH && isHttps) {
@@ -203,7 +225,8 @@ export class HlsStreamGrabber extends EventEmitter {
             useDoH: dohPreferredHosts.has(new URL(nextUrl).hostname),
             timeoutMs,
             redirectCount: redirectCount + 1,
-            onChunk
+            onChunk,
+            overrideHeaders
           })
             .then(resolve)
             .catch(reject);
@@ -231,17 +254,17 @@ export class HlsStreamGrabber extends EventEmitter {
     });
   }
 
-  async fetchWithDoHFallback(url, { timeoutMs = 12000, onChunk = null } = {}) {
+  async fetchWithDoHFallback(url, { timeoutMs = 12000, onChunk = null, overrideHeaders = null } = {}) {
     const parsed = new URL(url);
     const host = parsed.hostname;
     const isHttps = parsed.protocol === 'https:';
 
     if (isHttps && dohPreferredHosts.has(host)) {
-      return this.requestRaw(url, { useDoH: true, timeoutMs, onChunk });
+      return this.requestRaw(url, { useDoH: true, timeoutMs, onChunk, overrideHeaders });
     }
 
     try {
-      return await this.requestRaw(url, { useDoH: false, timeoutMs: Math.min(timeoutMs, 8000), onChunk });
+      return await this.requestRaw(url, { useDoH: false, timeoutMs: Math.min(timeoutMs, 8000), onChunk, overrideHeaders });
     } catch (err) {
       const msg = String(err && err.message || '');
       const isNetworkOrDnsFailure =
@@ -250,7 +273,7 @@ export class HlsStreamGrabber extends EventEmitter {
 
       if (isHttps && isNetworkOrDnsFailure) {
         dohPreferredHosts.add(host);
-        return this.requestRaw(url, { useDoH: true, timeoutMs, onChunk });
+        return this.requestRaw(url, { useDoH: true, timeoutMs, onChunk, overrideHeaders });
       }
       throw err;
     }
@@ -488,6 +511,43 @@ export class HlsStreamGrabber extends EventEmitter {
     await fs.promises.writeFile(dest, cleanBuf);
   }
 
+  async fetchBundledSubtitle(destSrtPath) {
+    if (!this.subtitleUrl) return null;
+    try {
+      const subHeaders =
+        this.subtitleHeaders && Object.keys(this.subtitleHeaders).length > 0
+          ? this.subtitleHeaders
+          : this.headers;
+      const buf = await this.fetchWithDoHFallback(this.subtitleUrl, {
+        timeoutMs: 12000,
+        overrideHeaders: subHeaders
+      });
+      const rawText = buf.toString('utf8');
+      if (!rawText || !rawText.trim()) return null;
+
+      const isAss = /\.(ass|ssa)(\?|$)/i.test(this.subtitleUrl) || /^\[Script Info\]/i.test(rawText.trim());
+      if (isAss) {
+        const tempAss = path.join(this.tempDir, 'bundled_sub.ass');
+        await fs.promises.writeFile(tempAss, rawText, 'utf8');
+        await new Promise((resolve) => {
+          execFile('ffmpeg', ['-y', '-i', tempAss, destSrtPath], { windowsHide: true }, () => resolve());
+        });
+        if (fs.existsSync(destSrtPath) && fs.statSync(destSrtPath).size > 0) {
+          return destSrtPath;
+        }
+        return null;
+      }
+
+      const srtText = vttToSrt(rawText);
+      if (!srtText || !srtText.trim()) return null;
+      await fs.promises.writeFile(destSrtPath, srtText, 'utf8');
+      return destSrtPath;
+    } catch (err) {
+      console.warn('[ADM HLS] Could not fetch bundled subtitle (continuing video remux):', err.message);
+      return null;
+    }
+  }
+
   async mergeSegments() {
     this.stopSpeedMeter();
 
@@ -524,6 +584,9 @@ export class HlsStreamGrabber extends EventEmitter {
         writeStream.end();
       });
 
+      const bundledSrtPath = await this.fetchBundledSubtitle(path.join(this.tempDir, 'bundled_sub.srt'));
+      const sidecarSrtPath = finalPath.replace(/\.[^/.]+$/, '') + '.srt';
+
       const finalizeSuccess = () => {
         try {
           fs.rmSync(this.tempDir, { recursive: true, force: true });
@@ -539,29 +602,81 @@ export class HlsStreamGrabber extends EventEmitter {
 
         this.status = 'completed';
         this.emit('status', this.status);
-        this.emit('complete', { id: this.id, filePath: finalPath, totalBytes: this.totalBytes });
+        this.emit('complete', {
+          id: this.id,
+          filePath: finalPath,
+          totalBytes: this.totalBytes,
+          subtitleEmbedded: this.subtitleEmbedded
+        });
       };
 
-      execFile(
-        'ffmpeg',
-        ['-y', '-i', tempTsPath, '-c', 'copy', '-movflags', '+faststart', finalPath],
-        { windowsHide: true },
-        (err) => {
-          if (!err && fs.existsSync(finalPath) && fs.statSync(finalPath).size > 0) {
-            try {
-              fs.unlinkSync(tempTsPath);
-            } catch (_) {}
-            finalizeSuccess();
-          } else {
-            // Direct fallback if ffmpeg is missing or failed
-            try {
-              if (fs.existsSync(finalPath)) fs.unlinkSync(finalPath);
-              fs.renameSync(tempTsPath, finalPath);
-            } catch (_) {}
-            finalizeSuccess();
-          }
+      const runVideoOnlyRemux = (saveSidecar) => {
+        if (saveSidecar && bundledSrtPath && fs.existsSync(bundledSrtPath)) {
+          try {
+            fs.copyFileSync(bundledSrtPath, sidecarSrtPath);
+          } catch (_) {}
         }
-      );
+        execFile(
+          'ffmpeg',
+          ['-y', '-i', tempTsPath, '-c', 'copy', '-movflags', '+faststart', finalPath],
+          { windowsHide: true },
+          (err) => {
+            if (!err && fs.existsSync(finalPath) && fs.statSync(finalPath).size > 0) {
+              try {
+                fs.unlinkSync(tempTsPath);
+              } catch (_) {}
+              finalizeSuccess();
+            } else {
+              // Direct fallback if ffmpeg is missing or failed
+              try {
+                if (fs.existsSync(finalPath)) fs.unlinkSync(finalPath);
+                fs.renameSync(tempTsPath, finalPath);
+              } catch (_) {}
+              finalizeSuccess();
+            }
+          }
+        );
+      };
+
+      if (bundledSrtPath && fs.existsSync(bundledSrtPath)) {
+        const isoLang = langToIso639_2(this.subtitleLang);
+        const subTitle = this.subtitleLang || 'English';
+        execFile(
+          'ffmpeg',
+          [
+            '-y',
+            '-i', tempTsPath,
+            '-sub_charenc', 'UTF-8',
+            '-i', bundledSrtPath,
+            '-map', '0:v',
+            '-map', '0:a?',
+            '-map', '1:0',
+            '-c:v', 'copy',
+            '-c:a', 'copy',
+            '-c:s', 'mov_text',
+            '-metadata:s:s:0', `language=${isoLang}`,
+            '-metadata:s:s:0', `title=${subTitle}`,
+            '-disposition:s:0', 'default',
+            '-movflags', '+faststart',
+            finalPath
+          ],
+          { windowsHide: true },
+          (err) => {
+            if (!err && fs.existsSync(finalPath) && fs.statSync(finalPath).size > 0) {
+              this.subtitleEmbedded = true;
+              try {
+                fs.unlinkSync(tempTsPath);
+              } catch (_) {}
+              finalizeSuccess();
+            } else {
+              console.warn('[ADM HLS] FFmpeg subtitle mux failed, falling back to video remux + sidecar .srt:', err && err.message);
+              runVideoOnlyRemux(true);
+            }
+          }
+        );
+      } else {
+        runVideoOnlyRemux(false);
+      }
     } catch (err) {
       this.status = 'error';
       this.error = `Failed to merge HLS segments: ${err.message}`;

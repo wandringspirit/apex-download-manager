@@ -206,11 +206,15 @@
         targetUrl = window.location.href;
       }
 
+      const bundledSub = quality !== 'audio' && quality !== 'subtitle' ? pickBestSubtitle(mediaElement) : null;
       const payload = {
         type: 'GRAB_MEDIA',
         url: targetUrl,
         fileName: `${pageTitle}.mp4`,
         headers: latestStreamHeaders,
+        subtitleUrl: bundledSub ? bundledSub.url : undefined,
+        subtitleHeaders: bundledSub && bundledSub.headers && Object.keys(bundledSub.headers).length > 0 ? bundledSub.headers : undefined,
+        subtitleLang: bundledSub ? bundledSub.language : undefined,
         quality
       };
 
@@ -293,7 +297,7 @@
             if (chrome.runtime.lastError || !res || !res.success) {
               fallbackDirectPost(targetUrl, `${pageTitle}.mp4`, handleSuccess, handleError);
             } else {
-              handleSuccess();
+              handleSuccess(res.hasSubtitle ? 'Sent to ADM (+SRT)!' : 'Sent to ADM!');
             }
           });
         }

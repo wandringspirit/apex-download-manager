@@ -546,6 +546,13 @@ if (chrome.tabs) {
   });
 }
 
+function pickBestSubtitleForTab(tabId) {
+  const subs = (tabId && detectedSubtitlesByTab.get(tabId)) || [];
+  if (subs.length === 0) return null;
+  const english = subs.find(s => /eng|^en\b/i.test(String(s.language || s.url || '')));
+  return english || subs[subs.length - 1];
+}
+
 // Listen for messages from content scripts and popup
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === 'CHECK_ADM_STATUS') {
@@ -568,13 +575,22 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       if (message.url && (!headers || Object.keys(headers).length === 0)) {
         headers = await buildRequestHeaders(message.url, message.referrer || '');
       }
+      const tabId = message.tabId || (sender && sender.tab ? sender.tab.id : null);
+      const autoSub = message.subtitleUrl ? null : pickBestSubtitleForTab(tabId);
+      const subtitleUrl = message.subtitleUrl || (autoSub ? autoSub.url : '');
+      const subtitleHeaders = message.subtitleHeaders || (autoSub ? autoSub.headers : undefined);
+      const subtitleLang = message.subtitleLang || (autoSub ? autoSub.language : '');
+
       const result = await sendToADM({
         url: message.url,
         fileName: message.fileName || '',
         referrer: message.referrer || '',
-        headers
+        headers,
+        subtitleUrl: subtitleUrl || undefined,
+        subtitleHeaders,
+        subtitleLang: subtitleLang || undefined
       });
-      sendResponse({ success: !!result, result });
+      sendResponse({ success: !!result, hasSubtitle: !!subtitleUrl, result });
     })();
     return true;
   }
@@ -622,15 +638,27 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         resolvedFileName = message.quality === 'subtitle' ? `${cleanTabTitle}.srt` : `${cleanTabTitle}.mp4`;
       }
     }
+
+    // Automatically bundle any detected subtitle track with video downloads so VLC opens subtitles automatically
+    const wantsVideoWithSubs = message.quality !== 'audio' && message.quality !== 'subtitle';
+    const tabId = sender && sender.tab ? sender.tab.id : null;
+    const autoSub = wantsVideoWithSubs && !message.subtitleUrl ? pickBestSubtitleForTab(tabId) : null;
+    const subtitleUrl = wantsVideoWithSubs ? (message.subtitleUrl || (autoSub ? autoSub.url : '')) : '';
+    const subtitleHeaders = wantsVideoWithSubs ? (message.subtitleHeaders || (autoSub ? autoSub.headers : undefined)) : undefined;
+    const subtitleLang = wantsVideoWithSubs ? (message.subtitleLang || (autoSub ? autoSub.language : '')) : '';
+
     sendToADM({
       url: message.url,
       fileName: resolvedFileName,
       quality: message.quality,
       convertToSrt: message.quality === 'subtitle' && !message.url.includes('youtube.com') && !message.url.includes('youtu.be'),
       referrer: sender.tab ? sender.tab.url : '',
-      headers: message.headers && typeof message.headers === 'object' ? message.headers : undefined
+      headers: message.headers && typeof message.headers === 'object' ? message.headers : undefined,
+      subtitleUrl: subtitleUrl || undefined,
+      subtitleHeaders,
+      subtitleLang: subtitleLang || undefined
     }).then(result => {
-      sendResponse({ success: !!result, result });
+      sendResponse({ success: !!result, hasSubtitle: !!subtitleUrl, result });
     });
     return true;
   }

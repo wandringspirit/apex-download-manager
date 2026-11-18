@@ -85,6 +85,13 @@ export class TaskManager extends EventEmitter {
         if (t.headers && Object.keys(t.headers).length > 0) {
           json.headers = t.headers;
         }
+        if (t.subtitleUrl) {
+          json.subtitleUrl = t.subtitleUrl;
+          json.subtitleLang = t.subtitleLang || 'English';
+          if (t.subtitleHeaders && Object.keys(t.subtitleHeaders).length > 0) {
+            json.subtitleHeaders = t.subtitleHeaders;
+          }
+        }
         return json;
       });
       fs.writeFileSync(this.storagePath, JSON.stringify(list, null, 2), 'utf8');
@@ -105,6 +112,17 @@ export class TaskManager extends EventEmitter {
     });
 
     task.on('complete', (data) => {
+      // For direct video downloads carrying a bundled subtitleUrl, drop an exact same-name .srt sidecar so VLC auto-loads it
+      if (task instanceof DownloadTask && task.subtitleUrl) {
+        const sidecar = new SubtitleDownloader({
+          url: task.subtitleUrl,
+          fileName: task.fileName,
+          savePath: task.savePath,
+          headers: (task.subtitleHeaders && Object.keys(task.subtitleHeaders).length > 0) ? task.subtitleHeaders : task.headers
+        });
+        sidecar.on('error', (err) => console.warn('[ADM] Sidecar .srt download failed:', err.message));
+        sidecar.start();
+      }
       this.saveState();
       this.emit('task:complete', data);
       this.processQueue();
@@ -117,7 +135,7 @@ export class TaskManager extends EventEmitter {
     });
   }
 
-  async addTask({ url, fileName, savePath, category, maxConnections, headers, quality, convertToSrt = false, autoStart = true }) {
+  async addTask({ url, fileName, savePath, category, maxConnections, headers, quality, convertToSrt = false, subtitleUrl = '', subtitleHeaders, subtitleLang = '', autoStart = true }) {
     // Check if it's a subtitle download (.vtt / .srt / .ass / .ssa or explicit convertToSrt)
     const isSubtitleFile = convertToSrt || /\.(vtt|srt|ass|ssa)(\?|$)/i.test(url);
     if (isSubtitleFile) {
@@ -171,7 +189,10 @@ export class TaskManager extends EventEmitter {
         fileName,
         savePath,
         category: category || 'Video',
-        headers: headers || {}
+        headers: headers || {},
+        subtitleUrl: subtitleUrl || '',
+        subtitleHeaders: subtitleHeaders || {},
+        subtitleLang: subtitleLang || 'English'
       });
       this.attachTaskEvents(hlsTask);
       this.downloads.set(hlsTask.id, hlsTask);
@@ -187,7 +208,10 @@ export class TaskManager extends EventEmitter {
       savePath,
       category,
       maxConnections: maxConnections || 32,
-      headers: headers || {}
+      headers: headers || {},
+      subtitleUrl: subtitleUrl || '',
+      subtitleHeaders: subtitleHeaders || {},
+      subtitleLang: subtitleLang || 'English'
     });
 
     this.attachTaskEvents(task);
