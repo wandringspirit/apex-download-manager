@@ -115,4 +115,35 @@ describe('TaskManager - Lifecycle & Residual Cleanup Test Suite', () => {
     taskManager.setTaskConcurrency(task.id, 8);
     assert.strictEqual(task.maxConnections, 8);
   });
+
+  it('TC-25: Deleting Partial Download Permanently Purges All Residual & Temp Files', async () => {
+    const task = await taskManager.addTask({
+      url: 'https://example.com/anime/master.m3u8',
+      fileName: 'Partial_Episode.mp4',
+      savePath: TEST_DIR,
+      autoStart: false
+    });
+
+    const tempDir = path.join(TEST_DIR, `.temp_${task.id}`);
+    fs.mkdirSync(tempDir, { recursive: true });
+    fs.writeFileSync(path.join(tempDir, 'part_000000.ts'), Buffer.alloc(512));
+    const partFile = path.join(TEST_DIR, 'Partial_Episode.mp4.part');
+    const ytdlFile = path.join(TEST_DIR, 'Partial_Episode.mp4.ytdl');
+    const admBuf = path.join(TEST_DIR, 'Partial_Episode.mp4.adm_download');
+    const halfMp4 = path.join(TEST_DIR, 'Partial_Episode.mp4');
+
+    fs.writeFileSync(partFile, Buffer.alloc(128));
+    fs.writeFileSync(ytdlFile, '{}');
+    fs.writeFileSync(admBuf, Buffer.alloc(256));
+    fs.writeFileSync(halfMp4, Buffer.alloc(1024));
+
+    taskManager.deleteTask(task.id, true);
+
+    assert.strictEqual(fs.existsSync(tempDir), false, '.temp_<id> HLS folder must be permanently deleted');
+    assert.strictEqual(fs.existsSync(partFile), false, '.part residual must be deleted');
+    assert.strictEqual(fs.existsSync(ytdlFile), false, '.ytdl residual must be deleted');
+    assert.strictEqual(fs.existsSync(admBuf), false, '.adm_download buffer must be deleted');
+    assert.strictEqual(fs.existsSync(halfMp4), false, 'Partial target file must be permanently deleted');
+    assert.strictEqual(taskManager.downloads.has(task.id), false);
+  });
 });

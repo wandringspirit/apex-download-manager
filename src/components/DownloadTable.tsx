@@ -215,7 +215,7 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({
             <th className="py-2 px-2.5 border-r border-white/[0.04] w-24">Size</th>
             <th className="py-2 px-2.5 border-r border-white/[0.04] w-36">Status</th>
             <th className="py-2 px-2.5 border-r border-white/[0.04] w-24">Time left</th>
-            <th className="py-2 px-3 w-52">Transfer Rate</th>
+            <th className="py-2 px-3 w-56">Transfer Rate</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-white/[0.04] text-[11px] text-slate-200">
@@ -379,6 +379,23 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({
                         >
                           <Activity className="w-3 h-3" />
                         </button>
+
+                        {/* Delete / Remove Row Button (Universal Symbol: 🗑) */}
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            const isPartial = task.status !== 'completed';
+                            onDelete(task.id, isPartial);
+                          }}
+                          className="w-6 h-6 rounded flex items-center justify-center bg-white/[0.04] hover:bg-rose-500/15 text-slate-400 hover:text-rose-400 transition cursor-pointer border border-white/[0.06] hover:border-rose-500/30"
+                          title={
+                            task.status === 'completed'
+                              ? 'Remove from list (keeps downloaded file)'
+                              : 'Delete download & permanently remove partial files'
+                          }
+                        >
+                          <Trash2 className="w-3 h-3" />
+                        </button>
                       </div>
                     </div>
                   </td>
@@ -509,13 +526,13 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({
           {/* Remove */}
           <button
             onClick={() => {
-              onDelete(contextMenu.task!.id, false);
+              onDelete(contextMenu.task!.id, contextMenu.task!.status !== 'completed');
               setContextMenu({ visible: false, x: 0, y: 0, task: null });
             }}
             className="w-full text-left px-3 py-1.5 hover:bg-[#1e2330] cursor-pointer flex items-center gap-2 text-rose-400"
           >
             <Trash2 className="w-3.5 h-3.5" />
-            Remove from list
+            {contextMenu.task.status === 'completed' ? 'Remove from list' : 'Delete & purge partial files'}
           </button>
 
           <div className="h-[1px] bg-white/5 my-1" />

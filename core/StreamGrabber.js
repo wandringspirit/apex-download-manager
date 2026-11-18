@@ -146,6 +146,7 @@ export class HlsStreamGrabber extends EventEmitter {
     this.tempDir = path.join(this.savePath, `.temp_${this.id}`);
     this.isCancelled = false;
     this.isPaused = false;
+    this.ffmpegProc = null;
     this.error = null;
     this.headers = options.headers || {};
     this.subtitleUrl = options.subtitleUrl || '';
@@ -397,6 +398,7 @@ export class HlsStreamGrabber extends EventEmitter {
     if (this.status === 'downloading') return;
     this.isCancelled = false;
     this.isPaused = false;
+    this.ffmpegProc = null;
     this.error = null;
 
     try {
@@ -616,11 +618,13 @@ export class HlsStreamGrabber extends EventEmitter {
             fs.copyFileSync(bundledSrtPath, sidecarSrtPath);
           } catch (_) {}
         }
-        execFile(
+        this.ffmpegProc = execFile(
           'ffmpeg',
           ['-y', '-i', tempTsPath, '-c', 'copy', '-movflags', '+faststart', finalPath],
           { windowsHide: true },
           (err) => {
+            this.ffmpegProc = null;
+            if (this.isCancelled) return;
             if (!err && fs.existsSync(finalPath) && fs.statSync(finalPath).size > 0) {
               try {
                 fs.unlinkSync(tempTsPath);
@@ -641,7 +645,7 @@ export class HlsStreamGrabber extends EventEmitter {
       if (bundledSrtPath && fs.existsSync(bundledSrtPath)) {
         const isoLang = langToIso639_2(this.subtitleLang);
         const subTitle = this.subtitleLang || 'English';
-        execFile(
+        this.ffmpegProc = execFile(
           'ffmpeg',
           [
             '-y',
@@ -662,6 +666,8 @@ export class HlsStreamGrabber extends EventEmitter {
           ],
           { windowsHide: true },
           (err) => {
+            this.ffmpegProc = null;
+            if (this.isCancelled) return;
             if (!err && fs.existsSync(finalPath) && fs.statSync(finalPath).size > 0) {
               this.subtitleEmbedded = true;
               try {
@@ -695,6 +701,10 @@ export class HlsStreamGrabber extends EventEmitter {
   cancel() {
     this.isCancelled = true;
     this.stopSpeedMeter();
+    if (this.ffmpegProc) {
+      try { this.ffmpegProc.kill('SIGKILL'); } catch (_) {}
+      this.ffmpegProc = null;
+    }
     this.status = 'paused';
     try {
       fs.rmSync(this.tempDir, { recursive: true, force: true });

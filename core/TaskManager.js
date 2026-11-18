@@ -275,67 +275,87 @@ export class TaskManager extends EventEmitter {
     const task = this.downloads.get(id);
     if (!task) return;
 
-    if (task.status === 'downloading' && typeof task.pause === 'function') {
-      task.pause();
+    // Immediately stop any active sockets, HLS workers, yt-dlp or FFmpeg processes so Windows releases file handles
+    if (typeof task.cancel === 'function') {
+      try { task.cancel(); } catch (_) {}
+    }
+    if (['downloading', 'parsing', 'merging', 'probing'].includes(task.status) && typeof task.pause === 'function') {
+      try { task.pause(); } catch (_) {}
     }
 
     const saveDir = task.savePath || path.join(os.homedir(), 'Downloads');
+    const cleanBase = (task.fileName || '').replace(/\.[^/.]+$/, '').trim();
+    const tempDir = task.tempDir || path.join(saveDir, `.temp_${id}`);
+    const incPath = task.getIncompleteFilePath
+      ? task.getIncompleteFilePath()
+      : (task.fileName ? path.join(saveDir, `${task.fileName}.adm_download`) : null);
+    const finalFilePath = task.getFilePath
+      ? task.getFilePath()
+      : (task.filePath || (task.fileName ? path.join(saveDir, task.fileName) : null));
 
-    // 1. ALWAYS purge metadata journals, residual .json files, and temporary buffers
-    try {
-      const metaCandidates = [
-        task.getMetaPath ? task.getMetaPath() : null,
-        task.metaPath,
-        task.fileName ? path.join(saveDir, `.${task.fileName}.adm.json`) : null,
-        task.fileName ? path.join(saveDir, `${task.fileName}.adm.json`) : null,
-        path.join(saveDir, `.${id}.adm.json`)
-      ].filter(Boolean);
+    const purgeArtifacts = () => {
+      // 1. ALWAYS purge metadata journals, yt-dlp/multi-part residuals, and temporary buffers
+      try {
+        const metaCandidates = [
+          task.getMetaPath ? task.getMetaPath() : null,
+          task.metaPath,
+          task.fileName ? path.join(saveDir, `.${task.fileName}.adm.json`) : null,
+          task.fileName ? path.join(saveDir, `${task.fileName}.adm.json`) : null,
+          task.fileName ? path.join(saveDir, `${task.fileName}.part`) : null,
+          task.fileName ? path.join(saveDir, `${task.fileName}.ytdl`) : null,
+          path.join(saveDir, `.${id}.adm.json`),
+          incPath
+        ].filter(Boolean);
 
-      for (const candidate of metaCandidates) {
-        if (fs.existsSync(candidate)) {
-          try { fs.unlinkSync(candidate); } catch (e) {}
+        for (const candidate of metaCandidates) {
+          if (fs.existsSync(candidate)) {
+            try { fs.unlinkSync(candidate); } catch (e) {}
+          }
         }
-      }
 
-      // Scan saveDir for any .adm.json matching this file or task id
-      if (fs.existsSync(saveDir)) {
-        const files = fs.readdirSync(saveDir);
-        const cleanBase = (task.fileName || '').replace(/\.[^/.]+$/, '').trim();
-        for (const f of files) {
-          if (f.endsWith('.adm.json') || f.endsWith('.parts')) {
-            if ((cleanBase && f.includes(cleanBase)) || f.includes(id) || (task.id && f.includes(task.id))) {
-              try { fs.unlinkSync(path.join(saveDir, f)); } catch (e) {}
+        // Scan saveDir for any residual partial/temp/journal files matching this task or base filename
+        if (fs.existsSync(saveDir)) {
+          const files = fs.readdirSync(saveDir);
+          for (const f of files) {
+            const isResidualExt =
+              f.endsWith('.adm.json') ||
+              f.endsWith('.adm_meta') ||
+              f.endsWith('.adm_download') ||
+              f.endsWith('.parts') ||
+              f.endsWith('.part') ||
+              f.endsWith('.ytdl') ||
+              /\.part-Frag\d+/i.test(f) ||
+              /\.temp\.\w+$/i.test(f);
+            if (isResidualExt) {
+              if ((cleanBase && f.includes(cleanBase)) || f.includes(id) || (task.id && f.includes(task.id))) {
+                try { fs.unlinkSync(path.join(saveDir, f)); } catch (e) {}
+              }
             }
           }
         }
-      }
 
-      // Clean up any HlsStreamGrabber temp folder
-      const tempDir = task.tempDir || path.join(saveDir, `.temp_${id}`);
-      if (fs.existsSync(tempDir)) {
-        try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch (e) {}
-      }
-    } catch (e) {
-      console.warn('Error cleaning up metadata/temporary files:', e.message);
-    }
-
-    // Clean up any incomplete .adm_download buffer
-    try {
-      const incPath = task.getIncompleteFilePath ? task.getIncompleteFilePath() : (task.fileName ? path.join(saveDir, `${task.fileName}.adm_download`) : null);
-      if (incPath && fs.existsSync(incPath)) {
-        try { fs.unlinkSync(incPath); } catch (e) {}
-      }
-    } catch (e) {}
-
-    // 2. If user specifically requested to delete the downloaded file as well
-    if (deleteFile) {
-      try {
-        const fp = task.getFilePath ? task.getFilePath() : (task.filePath || path.join(saveDir, task.fileName));
-        if (fp && fs.existsSync(fp)) {
-          fs.unlinkSync(fp);
+        // Clean up any HlsStreamGrabber temp folder (.temp_<id>)
+        if (fs.existsSync(tempDir)) {
+          try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch (e) {}
         }
-      } catch (e) {}
-    }
+      } catch (e) {
+        console.warn('Error cleaning up metadata/temporary files:', e.message);
+      }
+
+      // 2. If deleteFile=true (including any partially downloaded task deleted via row button), permanently remove partial target file
+      if (deleteFile && finalFilePath) {
+        try {
+          if (fs.existsSync(finalFilePath)) {
+            fs.unlinkSync(finalFilePath);
+          }
+        } catch (e) {}
+      }
+    };
+
+    // Immediate cleanup + short delayed pass on Windows in case an active socket/FFmpeg handle was still closing
+    purgeArtifacts();
+    const retryTimer = setTimeout(purgeArtifacts, 400);
+    if (typeof retryTimer.unref === 'function') retryTimer.unref();
 
     this.downloads.delete(id);
     this.saveState();

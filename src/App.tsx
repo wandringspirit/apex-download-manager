@@ -486,7 +486,11 @@ export const AppContent: React.FC = () => {
         onResumeClick={() => selectedTaskId && handleResume(selectedTaskId)}
         onPauseClick={() => selectedTaskId && handlePause(selectedTaskId)}
         onStopAllClick={handleStopAll}
-        onDeleteClick={() => selectedTaskId && handleDelete(selectedTaskId)}
+        onDeleteClick={() => {
+          if (!selectedTaskId) return;
+          const target = tasks.find(t => t.id === selectedTaskId);
+          handleDelete(selectedTaskId, target ? target.status !== 'completed' : false);
+        }}
         onDeleteCompletedClick={() => {
           tasks.filter(t => t.status === 'completed').forEach(t => handleDelete(t.id));
         }}
