@@ -462,6 +462,20 @@ export const Toolbar: React.FC<ToolbarProps> = ({
           <span className="text-[10px] mt-0.5 font-medium tracking-tight text-slate-400 group-hover:text-slate-200 truncate max-w-[56px]">Stop Q</span>
         </button>
 
+        <div className="h-7 w-[1px] bg-white/[0.08] mx-1" />
+
+        {/* Open Downloads Folder */}
+        <button
+          onClick={onOpenDefaultFolder}
+          className="flex flex-col items-center justify-center min-w-[64px] px-2 py-1.5 rounded-md hover:bg-amber-500/10 transition text-amber-400 hover:text-amber-300 group cursor-pointer"
+          title="Open Downloads Folder in Explorer"
+        >
+          <div className="w-6 h-6 flex items-center justify-center text-amber-400 group-hover:text-amber-300 transition-colors">
+            <Folder className="w-5 h-5 stroke-[1.75]" />
+          </div>
+          <span className="text-[10px] mt-0.5 font-medium tracking-tight text-amber-400/90 group-hover:text-amber-300 truncate max-w-[64px]">Downloads</span>
+        </button>
+
         {/* Tell a Friend */}
         <button
           onClick={onTellFriendClick}
