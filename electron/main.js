@@ -1,5 +1,6 @@
 import { app, BrowserWindow, Menu, Tray, nativeImage, shell, ipcMain } from 'electron';
 import path from 'path';
+import os from 'os';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
 import { TaskManager } from '../core/TaskManager.js';
@@ -7,6 +8,7 @@ import { BridgeServer } from '../core/BridgeServer.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+const startHidden = process.argv.includes('--hidden') || process.argv.includes('--tray');
 
 // Prevent transient network/filesystem stream errors from crashing the Electron desktop app
 process.on('uncaughtException', (err) => {
@@ -27,17 +29,13 @@ if (!gotTheLock) {
   app.quit();
 } else {
   app.on('second-instance', () => {
-    if (mainWindow) {
-      if (mainWindow.isMinimized()) mainWindow.restore();
-      mainWindow.show();
-      mainWindow.focus();
-    }
+    showMainWindow();
   });
 }
 
 function showMainWindow() {
   if (!mainWindow) {
-    createWindow();
+    createWindow(false);
     return;
   }
   if (mainWindow.isMinimized()) mainWindow.restore();
@@ -47,10 +45,11 @@ function showMainWindow() {
 
 function createTray() {
   if (tray) return tray;
-  const iconPath = path.join(__dirname, '..', 'extension', 'icons', 'icon48.png');
-  const fallbackIcon = path.join(__dirname, '..', 'extension', 'icons', 'icon128.png');
-  const resolvedIcon = fs.existsSync(iconPath) ? iconPath : fallbackIcon;
-  if (!fs.existsSync(resolvedIcon)) return null;
+  const icoPath = path.join(__dirname, '..', 'extension', 'icons', 'icon.ico');
+  const png48 = path.join(__dirname, '..', 'extension', 'icons', 'icon48.png');
+  const png128 = path.join(__dirname, '..', 'extension', 'icons', 'icon128.png');
+  const resolvedIcon = [icoPath, png48, png128].find((p) => fs.existsSync(p));
+  if (!resolvedIcon) return null;
 
   const trayIcon = nativeImage.createFromPath(resolvedIcon);
   tray = new Tray(trayIcon);
@@ -58,6 +57,12 @@ function createTray() {
 
   const contextMenu = Menu.buildFromTemplate([
     { label: 'Show Apex Download Manager', click: () => showMainWindow() },
+    {
+      label: 'Open Downloads Folder',
+      click: () => {
+        shell.openPath(path.join(os.homedir(), 'Downloads'));
+      }
+    },
     { type: 'separator' },
     {
       label: 'Quit ADM (Stops Auto-Catch)',
@@ -74,7 +79,7 @@ function createTray() {
   return tray;
 }
 
-function createWindow() {
+function createWindow(hidden = false) {
   const iconPath = path.join(__dirname, '..', 'extension', 'icons', 'icon128.png');
   const appIcon = fs.existsSync(iconPath) ? nativeImage.createFromPath(iconPath) : null;
 
@@ -83,6 +88,7 @@ function createWindow() {
     height: 720,
     minWidth: 880,
     minHeight: 560,
+    show: !hidden,
     title: 'Apex Download Manager (IDM Pro Edition)',
     icon: appIcon,
     frame: true,
@@ -145,7 +151,7 @@ app.whenReady().then(async () => {
   }
 
   createTray();
-  createWindow();
+  createWindow(startHidden);
 
   app.on('activate', () => {
     showMainWindow();
