@@ -13,12 +13,8 @@ $ElectronExe = "$ScriptDir\node_modules\electron\dist\electron.exe"
 $IconPath = "$ScriptDir\extension\icons\icon.ico"
 
 $Shortcut = $WshShell.CreateShortcut("$DesktopPath\Apex Download Manager.lnk")
-if (Test-Path $ElectronExe) {
-    $Shortcut.TargetPath = $ElectronExe
-    $Shortcut.Arguments = """$ScriptDir"""
-} else {
-    $Shortcut.TargetPath = "$ScriptDir\launch.vbs"
-}
+$Shortcut.TargetPath = "wscript.exe"
+$Shortcut.Arguments = """$ScriptDir\launch.vbs"""
 $Shortcut.WorkingDirectory = "$ScriptDir"
 if (Test-Path $IconPath) {
     $Shortcut.IconLocation = "$IconPath"
@@ -26,3 +22,18 @@ if (Test-Path $IconPath) {
 $Shortcut.Description = "Apex Download Manager 6.42 Pro"
 $Shortcut.Save()
 Write-Host "Created shortcut successfully at $DesktopPath\Apex Download Manager.lnk"
+
+# Also sync startup shortcut for auto-catching downloads in background
+$StartupPath = [System.IO.Path]::Combine($env:APPDATA, 'Microsoft\Windows\Start Menu\Programs\Startup')
+if (Test-Path $StartupPath) {
+    $StartupShortcut = $WshShell.CreateShortcut("$StartupPath\Apex Download Manager.lnk")
+    $StartupShortcut.TargetPath = "wscript.exe"
+    $StartupShortcut.Arguments = """$ScriptDir\launch-hidden.vbs"""
+    $StartupShortcut.WorkingDirectory = "$ScriptDir"
+    if (Test-Path $IconPath) {
+        $StartupShortcut.IconLocation = "$IconPath"
+    }
+    $StartupShortcut.Description = "Apex Download Manager Background Service"
+    $StartupShortcut.Save()
+    Write-Host "Created startup shortcut at $StartupPath\Apex Download Manager.lnk"
+}
