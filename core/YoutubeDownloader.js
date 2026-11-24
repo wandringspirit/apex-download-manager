@@ -46,8 +46,15 @@ export class YoutubeDownloader extends EventEmitter {
     this.emit('status', this.status);
 
     return new Promise((resolve) => {
-      // Query title and metadata using yt-dlp json dump
-      const proc = spawn('python', ['-m', 'yt_dlp', '--js-runtimes', 'node', '--dump-json', '--no-playlist', this.url]);
+      // Query title and metadata using yt-dlp json dump with remote challenge solver
+      const proc = spawn('python', [
+        '-m', 'yt_dlp',
+        '--remote-components', 'ejs:github',
+        '--js-runtimes', 'node',
+        '--dump-json',
+        '--no-playlist',
+        this.url
+      ]);
       let stdout = '';
 
       proc.stdout.on('data', chunk => stdout += chunk);
@@ -70,24 +77,25 @@ export class YoutubeDownloader extends EventEmitter {
     });
   }
 
-  async start() {
-    if (this.status === 'downloading') return;
+  async start(useCookies = true) {
+    if (this.status === 'downloading' && this.process) return;
 
     if (!fs.existsSync(this.savePath)) {
       fs.mkdirSync(this.savePath, { recursive: true });
     }
 
     this.status = 'downloading';
+    this.error = null;
     this.emit('status', this.status);
 
     // Command to download best progressive mp4 or best available format
     const outputTemplate = path.join(this.savePath, '%(title)s.%(ext)s');
 
-    // Multi-threaded fragment acceleration args with YouTube throttle bypass
+    // Multi-threaded fragment acceleration args with YouTube throttle bypass and remote challenge solver
     const args = [
       '-m', 'yt_dlp',
+      '--remote-components', 'ejs:github',
       '--js-runtimes', 'node',
-      '--extractor-args', 'youtube:player_client=android,ios,web',
       '-c', // Continue partially downloaded files
       '--retries', '10',
       '--fragment-retries', '10',
@@ -110,14 +118,23 @@ export class YoutubeDownloader extends EventEmitter {
       );
     } else if (this.quality === 'audio') {
       args.push('-f', 'bestaudio/best', '-x', '--audio-format', 'mp3');
+    } else if (this.quality && /^\d+p?$/i.test(this.quality)) {
+      const height = parseInt(this.quality, 10);
+      args.push(
+        '-f', `bestvideo[height<=${height}]+bestaudio/best[height<=${height}]/bestvideo+bestaudio/best`,
+        '--merge-output-format', 'mp4'
+      );
     } else {
       args.push('-f', 'bestvideo+bestaudio/best', '--merge-output-format', 'mp4');
     }
 
-    // Optional user cookies file for YouTube authentication
+    // Optional user cookies file for YouTube authentication (only if requested and exists)
     const cookiePath = path.join(process.cwd(), 'cookies.txt');
-    if (fs.existsSync(cookiePath)) {
+    if (useCookies && fs.existsSync(cookiePath) && fs.statSync(cookiePath).size > 50) {
+      this.usedCookies = true;
       args.push('--cookies', cookiePath);
+    } else {
+      this.usedCookies = false;
     }
 
     const ffmpegExe = path.join(BUNDLED_BIN_DIR, 'ffmpeg.exe');
@@ -219,6 +236,16 @@ export class YoutubeDownloader extends EventEmitter {
         this.emit('status', this.status);
         this.emit('complete', { id: this.id, filePath: this.getFilePath() });
       } else if (this.status !== 'paused') {
+        // Resilient fallback: if download failed while using cookies (e.g. YouTube SABR experiment / account block), retry once cleanly without cookies
+        if (this.usedCookies && !this.retriedWithoutCookies) {
+          this.retriedWithoutCookies = true;
+          this.status = 'downloading';
+          this.error = null;
+          console.log(`[YoutubeDownloader] Retrying download cleanly without cookies for ${this.url}`);
+          this.start(false);
+          return;
+        }
+
         this.status = 'error';
         if (!this.error) {
           this.error = `Download process interrupted (exit code ${code})`;
